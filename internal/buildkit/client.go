@@ -15,6 +15,7 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
+	log "github.com/sirupsen/logrus"
 	"github.com/tonistiigi/fsutil"
 )
 
@@ -209,15 +210,15 @@ func reportSolveStatus(w io.Writer, ch <-chan *bkclient.SolveStatus) {
 			}
 			if vertex.Completed != nil && !seenCompleted[vertex.Name] {
 				seenCompleted[vertex.Name] = true
-				_, _ = fmt.Fprintf(w, "=> %s\n", vertex.Name)
+				log.Infof("=> %s", vertex.Name)
 			}
 			if vertex.Error != "" {
-				_, _ = fmt.Fprintf(w, "error: %s\n", vertex.Error)
+				log.Errorf("error: %s", vertex.Error)
 			}
 		}
-		for _, log := range status.Logs {
-			if len(log.Data) > 0 {
-				_, _ = w.Write(log.Data)
+		for _, entry := range status.Logs {
+			if len(entry.Data) > 0 {
+				_, _ = w.Write(entry.Data)
 			}
 		}
 	}

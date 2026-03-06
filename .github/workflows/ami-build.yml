@@ -1,0 +1,128 @@
+name: AMI Build
+
+on:
+  pull_request:
+    paths:
+      - 'packer/**'
+      - '.github/workflows/ami-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packer/**'
+      - '.github/workflows/ami-build.yml'
+  workflow_dispatch:
+    inputs:
+      region:
+        description: AWS region to build in
+        required: true
+        default: us-east-1
+        type: string
+      architecture:
+        description: Target architecture
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - amd64
+          - arm64
+      publish_public:
+        description: Publish the AMI publicly
+        required: true
+        default: false
+        type: boolean
+      buildkit_version:
+        description: BuildKit release to bake into the AMI
+        required: true
+        default: v0.28.0
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - run: packer fmt -check packer
+      - run: packer init packer/forja-builder.pkr.hcl
+      - run: packer validate -var "architecture=amd64" packer/forja-builder.pkr.hcl
+      - run: packer validate -var "architecture=arm64" packer/forja-builder.pkr.hcl
+
+  build-amd64:
+    needs: validate
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.architecture == 'both' || inputs.architecture == 'amd64'))
+    runs-on: ubuntu-latest
+    env:
+      PACKER_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || 'us-east-1' }}
+      PACKER_BUILDKIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.buildkit_version || 'v0.28.0' }}
+      PACKER_PUBLISH_PUBLIC: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_public || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
+          aws-region: ${{ env.PACKER_REGION }}
+      - run: packer init packer/forja-builder.pkr.hcl
+      - run: >
+          packer build
+          -var "region=${PACKER_REGION}"
+          -var "architecture=amd64"
+          -var "publish_public=${PACKER_PUBLISH_PUBLIC}"
+          -var "buildkit_version=${PACKER_BUILDKIT_VERSION}"
+          -var "commit_sha=${{ github.sha }}"
+          packer/forja-builder.pkr.hcl
+      - run: |
+          cp packer/manifest.json "packer/manifest-amd64-${PACKER_REGION}.json"
+          jq -r '.builds[-1].artifact_id' "packer/manifest-amd64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packer-manifest-amd64
+          path: packer/manifest-amd64-*.json
+
+  build-arm64:
+    needs: validate
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.architecture == 'both' || inputs.architecture == 'arm64'))
+    runs-on: ubuntu-latest
+    env:
+      PACKER_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || 'us-east-1' }}
+      PACKER_BUILDKIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.buildkit_version || 'v0.28.0' }}
+      PACKER_PUBLISH_PUBLIC: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_public || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
+          aws-region: ${{ env.PACKER_REGION }}
+      - run: packer init packer/forja-builder.pkr.hcl
+      - run: >
+          packer build
+          -var "region=${PACKER_REGION}"
+          -var "architecture=arm64"
+          -var "publish_public=${PACKER_PUBLISH_PUBLIC}"
+          -var "buildkit_version=${PACKER_BUILDKIT_VERSION}"
+          -var "commit_sha=${{ github.sha }}"
+          packer/forja-builder.pkr.hcl
+      - run: |
+          cp packer/manifest.json "packer/manifest-arm64-${PACKER_REGION}.json"
+          jq -r '.builds[-1].artifact_id' "packer/manifest-arm64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packer-manifest-arm64
+          path: packer/manifest-arm64-*.json

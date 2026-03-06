@@ -235,16 +235,18 @@ pricing:GetProducts  (for cost calculation)
 
 The AMI is a minimal Linux image optimized for fast boot:
 
-- **Base:** Amazon Linux 2023 (minimal)
+- **Base:** Ubuntu 24.04 minimal
 - **Installed:** buildkitd, AWS CLI v2, systemd
-- **Removed/disabled:** cloud-init full module set (use minimal), unnecessary systemd services, audit daemon, firewalld
-- **Optimized:** stripped initramfs, minimal kernel modules, no swap setup
+- **Removed/disabled:** snapd, unattended apt timers, AppArmor, and non-essential boot-time services that add latency to ephemeral builder startup
+- **Optimized:** `noatime` mounts, `fsck.mode=skip`, EC2-only cloud-init datasource config, duplicate address detection disabled for faster networking
 - **Included:** forja cloud-init script that handles cert pull + buildkitd start + self-destruct timer
 
 **Target boot time:** 3-5 seconds from RunInstances to buildkitd accepting connections.
 
 ### 6.2 AMI Distribution
 
+- Packer definitions live in the `forja` repo under `packer/`.
+- Maintainer AMIs are built by GitHub Actions using Packer, not by the end-user CLI.
 - Pre-built public AMIs are published by the maintainer in 5 regions:
   - `us-east-1`, `us-west-2`, `eu-west-1`, `eu-central-1`, `ap-southeast-1`
 - Both `arm64` and `amd64` AMIs are published.
@@ -688,6 +690,15 @@ forja/
     cost/
       calculator.go        # Per-build cost calculation + display
   install.sh               # curl | sh installer
+  packer/
+    forja-builder.pkr.hcl  # Builder AMI definition
+    scripts/
+      base.sh              # Installs BuildKit, AWS CLI, SSM agent
+      optimize-boot.sh     # Boot-time tuning inspired by Depot's EC2 work
+      cleanup.sh           # Image cleanup before snapshot
+  .github/
+    workflows/
+      ami-build.yml        # Maintainer AMI build/publish pipeline
   .goreleaser.yml          # Release configuration
   go.mod
   go.sum
@@ -699,7 +710,8 @@ forja/
 
 - `github.com/spf13/cobra` — CLI framework
 - `github.com/aws/aws-sdk-go-v2` — AWS SDK
-- `github.com/AlecAivazis/survey/v2` — Interactive prompts for wizard
+- `github.com/charmbracelet/bubbletea` — Terminal UI framework for interactive prompts
+- `github.com/charmbracelet/bubbles` — TUI input components used by the CLI prompts
 - `crypto/x509`, `crypto/ecdsa` — Certificate generation (stdlib)
 - `github.com/moby/buildkit` — BuildKit client and solve protocol
 
@@ -891,6 +903,10 @@ test/
 
 ### 16.5 CI Pipeline
 
+Current baseline implemented in the repo:
+- A GitHub Actions workflow runs `go test ./...`, `go vet ./...`, and `go build ./...` on pushes and pull requests.
+- This baseline CI covers unit and compile validation only. AWS integration and E2E validation remain a separate follow-up because they require dedicated cloud credentials, AMIs, and registries.
+
 ```yaml
 # .github/workflows/ci.yml
 name: CI
@@ -903,10 +919,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
       - run: go test ./...
       - run: go vet ./...
-      - run: golangci-lint run
+      - run: go build ./...
+
+The following integration and E2E jobs are the intended next stage once dedicated CI cloud infrastructure exists:
 
   integration:
     runs-on: ubuntu-latest

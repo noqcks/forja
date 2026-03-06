@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
-	"fmt"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +29,7 @@ func Execute(ctx context.Context) error {
 	)
 	cmd.SetContext(ctx)
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), err)
+		log.Error(err)
 		return err
 	}
 	return nil
