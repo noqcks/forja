@@ -16,7 +16,7 @@ import (
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
-"github.com/tonistiigi/fsutil"
+	"github.com/tonistiigi/fsutil"
 )
 
 type Request struct {
@@ -122,20 +122,33 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	loadErrCh := make(chan error, 1)
+	var loadPipeWriter *io.PipeWriter
+	var exportDone chan struct{}
+	var exportDoneOnce sync.Once
 	if req.Load {
 		pr, pw := io.Pipe()
+		loadPipeWriter = pw
+		exportDone = make(chan struct{})
 		opt.Exports = append(opt.Exports, bkclient.ExportEntry{
 			Type: "docker",
 			Attrs: map[string]string{
 				"name": strings.Join(req.Tags, ","),
 			},
 			Output: func(map[string]string) (io.WriteCloser, error) {
-				return pw, nil
+				return &pipeWriteCloser{
+					WriteCloser: pw,
+					onClose: func() {
+						exportDoneOnce.Do(func() {
+							close(exportDone)
+						})
+					},
+				}, nil
 			},
 		})
 		go func() {
-			defer pr.Close()
-			loadErrCh <- loadIntoDocker(ctx, pr, req.Stdout)
+			err := loadIntoDocker(ctx, pr, req.Stdout)
+			<-exportDone
+			loadErrCh <- err
 		}()
 	}
 	if req.Push {
@@ -179,6 +192,12 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("progress display: %w", displayErr)
 	}
 	if err != nil {
+		if req.Load {
+			_ = loadPipeWriter.CloseWithError(err)
+			exportDoneOnce.Do(func() {
+				close(exportDone)
+			})
+		}
 		return nil, fmt.Errorf("solve build: %w", err)
 	}
 	if req.Load {
@@ -215,7 +234,6 @@ func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {
 	return attachables, nil
 }
 
-
 func loadIntoDocker(ctx context.Context, reader io.Reader, stdout io.Writer) error {
 	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 	if err != nil {
@@ -234,4 +252,16 @@ func loadIntoDocker(ctx context.Context, reader io.Reader, stdout io.Writer) err
 		return fmt.Errorf("stream docker load response: %w", err)
 	}
 	return nil
+}
+
+type pipeWriteCloser struct {
+	io.WriteCloser
+	onClose func()
+}
+
+func (p *pipeWriteCloser) Close() error {
+	if p.onClose != nil {
+		defer p.onClose()
+	}
+	return p.WriteCloser.Close()
 }
