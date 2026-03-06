@@ -45,6 +45,40 @@ func TestRepositoryHelpersValidateMultiArchTagRules(t *testing.T) {
 	}
 }
 
+func TestQualifyTags(t *testing.T) {
+	t.Parallel()
+
+	ecr := "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+
+	tests := []struct {
+		name     string
+		tags     []string
+		registry string
+		want     []string
+	}{
+		{"empty registry is no-op", []string{"myapp:latest"}, "", []string{"myapp:latest"}},
+		{"shorthand tag gets prefixed", []string{"myapp:latest"}, ecr, []string{ecr + "/myapp:latest"}},
+		{"fully qualified tag unchanged", []string{ecr + "/myapp:latest"}, ecr, []string{ecr + "/myapp:latest"}},
+		{"ghcr tag unchanged", []string{"ghcr.io/org/app:v1"}, ecr, []string{"ghcr.io/org/app:v1"}},
+		{"localhost:5000 tag unchanged", []string{"localhost:5000/app:v1"}, ecr, []string{"localhost:5000/app:v1"}},
+		{"mixed tags", []string{"myapp:v1", ecr + "/other:v2"}, ecr, []string{ecr + "/myapp:v1", ecr + "/other:v2"}},
+		{"trailing slash on registry", []string{"myapp:v1"}, ecr + "/", []string{ecr + "/myapp:v1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := qualifyTags(tt.tags, tt.registry)
+			if len(got) != len(tt.want) {
+				t.Fatalf("qualifyTags() = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("qualifyTags()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestPlatformHelpersAndUserData(t *testing.T) {
 	t.Parallel()
 

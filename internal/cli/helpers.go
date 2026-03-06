@@ -135,6 +135,36 @@ func cacheNameForContext(contextDir string) string {
 	return buildkit.CacheName(abs)
 }
 
+// qualifyTags prepends the default registry to any tag that doesn't already
+// include a registry host (detected by a dot in the first path component).
+func qualifyTags(tags []string, registry string) []string {
+	if registry == "" {
+		return tags
+	}
+	registry = strings.TrimRight(registry, "/")
+	out := make([]string, len(tags))
+	for i, tag := range tags {
+		if tagHasRegistry(tag) {
+			out[i] = tag
+		} else {
+			out[i] = registry + "/" + tag
+		}
+	}
+	return out
+}
+
+// tagHasRegistry returns true if the tag already contains a registry host.
+// A registry host is present when the part before the first "/" contains a dot
+// or colon (e.g. "docker.io/lib/nginx" or "localhost:5000/app").
+func tagHasRegistry(tag string) bool {
+	slash := strings.Index(tag, "/")
+	if slash == -1 {
+		return false
+	}
+	host := tag[:slash]
+	return strings.ContainsAny(host, ".:")
+}
+
 func ensureSameRepository(tags []string) (string, error) {
 	if len(tags) == 0 {
 		return "", nil

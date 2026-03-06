@@ -68,6 +68,9 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	if err := config.Validate(cfg); err != nil {
 		return err
 	}
+	if opts.push {
+		opts.tags = qualifyTags(opts.tags, cfg.Registry)
+	}
 	if (opts.push || opts.load) && len(opts.tags) == 0 {
 		return fmt.Errorf("at least one --tag is required with --push or --load")
 	}
@@ -196,6 +199,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			CacheBucket:    cfg.CacheBucket,
 			CacheRegion:    cfg.Region,
 			CacheName:      cacheName,
+			Progress:       opts.progress,
 			Stdout:         cmd.OutOrStdout(),
 			Stderr:         cmd.ErrOrStderr(),
 		})
@@ -257,6 +261,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				CacheBucket:    cfg.CacheBucket,
 				CacheRegion:    cfg.Region,
 				CacheName:      cacheName,
+				Progress:       opts.progress,
 				Stdout:         cmd.OutOrStdout(),
 				Stderr:         cmd.ErrOrStderr(),
 			})
