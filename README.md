@@ -1,6 +1,6 @@
 # Forja
 
-Self-hosted remote Docker image builder for AWS. Like [Depot](https://depot.dev), but runs entirely in your own account with no SaaS dependency.
+Self-hosted remote Docker image builder for AWS. Runs entirely in your own account with no SaaS dependency.
 
 Forja spins up ephemeral EC2 instances running [BuildKit](https://github.com/moby/buildkit), builds your images remotely over mTLS, and tears down the instance when done. You pay only for EC2 compute time and S3 cache storage.
 
@@ -111,7 +111,7 @@ Each builds natively on its target architecture -- no QEMU emulation. Forja then
 
 ## Cost
 
-You pay EC2 on-demand rates with no markup. For comparison, Depot charges ~16x more per build minute.
+You pay EC2 on-demand rates with no markup.
 
 | Instance Type | vCPU | RAM | Hourly Rate | 5-min build |
 |--------------|------|-----|-------------|-------------|
