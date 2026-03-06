@@ -6,11 +6,8 @@ on:
       - 'packer/**'
       - '.github/workflows/ami-build.yml'
   push:
-    branches:
-      - main
-    paths:
-      - 'packer/**'
-      - '.github/workflows/ami-build.yml'
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       region:
