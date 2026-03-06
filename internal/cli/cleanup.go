@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
-	"github.com/AlecAivazis/survey/v2"
 	"github.com/noqcks/forja/internal/config"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -27,17 +27,20 @@ func newCleanupCmd(root *rootOptions) *cobra.Command {
 				return err
 			}
 			if len(instances) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No orphaned forja instances found.")
+				log.Info("No orphaned forja instances found.")
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Found %d orphaned forja instance(s):\n", len(instances))
+			log.Infof("Found %d orphaned forja instance(s):", len(instances))
 			ids := make([]string, 0, len(instances))
 			for _, instance := range instances {
 				ids = append(ids, instance.ID)
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s  launched %s ago\n", instance.ID, instance.InstanceType, instance.State, time.Since(instance.LaunchTime).Round(time.Minute))
+				log.Infof("  %s  %s  %s  launched %s ago", instance.ID, instance.InstanceType, instance.State, time.Since(instance.LaunchTime).Round(time.Minute))
 			}
-			confirm := false
-			if err := survey.AskOne(&survey.Confirm{Message: "Terminate?", Default: false}, &confirm); err != nil {
+			confirm, err := confirmAction(cmd, "Terminate orphaned instances?", false)
+			if err != nil {
+				if errors.Is(err, errPromptCanceled) {
+					return nil
+				}
 				return err
 			}
 			if !confirm {
@@ -47,7 +50,7 @@ func newCleanupCmd(root *rootOptions) *cobra.Command {
 				return err
 			}
 			for _, id := range ids {
-				fmt.Fprintf(cmd.OutOrStdout(), "  [ok] Terminated %s\n", id)
+				log.Infof("[ok] Terminated %s", id)
 			}
 			return nil
 		},

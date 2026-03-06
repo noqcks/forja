@@ -1,20 +1,28 @@
 package buildkit
 
 import (
+	"archive/tar"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	dockerconfig "github.com/docker/cli/cli/config"
-	dockerclient "github.com/docker/docker/client"
+	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
+	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/tonistiigi/fsutil"
 )
 
@@ -37,12 +45,14 @@ type Request struct {
 	CacheBucket    string
 	CacheRegion    string
 	CacheName      string
+	Progress       string
 	Stdout         io.Writer
 	Stderr         io.Writer
 }
 
 type Result struct {
 	ExporterResponse map[string]string
+	WaitDuration     time.Duration
 }
 
 func Run(ctx context.Context, req Request) (*Result, error) {
@@ -57,9 +67,11 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	defer client.Close()
 
+	waitStart := time.Now()
 	if err := client.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("wait for buildkit: %w", err)
 	}
+	waitDuration := time.Since(waitStart)
 
 	contextDir, dockerfilePath, err := NormalizeContext(req.ContextDir, req.DockerfilePath)
 	if err != nil {
@@ -119,22 +131,23 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		opt.CacheExports = []bkclient.CacheOptionsEntry{{Type: "s3", Attrs: cacheAttrs}}
 	}
 
-	loadErrCh := make(chan error, 1)
+	var loadTarPath string
+	var loadTarFile *os.File
 	if req.Load {
-		pr, pw := io.Pipe()
+		loadTarFile, err = os.CreateTemp("", "forja-load-*.tar")
+		if err != nil {
+			return nil, fmt.Errorf("create temp image tar: %w", err)
+		}
+		loadTarPath = loadTarFile.Name()
 		opt.Exports = append(opt.Exports, bkclient.ExportEntry{
-			Type: "docker",
+			Type: bkclient.ExporterOCI,
 			Attrs: map[string]string{
 				"name": strings.Join(req.Tags, ","),
 			},
 			Output: func(map[string]string) (io.WriteCloser, error) {
-				return pw, nil
+				return loadTarFile, nil
 			},
 		})
-		go func() {
-			defer pr.Close()
-			loadErrCh <- loadIntoDocker(ctx, pr, req.Stdout)
-		}()
 	}
 	if req.Push {
 		attrs := map[string]string{
@@ -151,24 +164,49 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	statusCh := make(chan *bkclient.SolveStatus)
+	displayMode := progressui.DisplayMode(req.Progress)
+	if displayMode == "" {
+		displayMode = progressui.AutoMode
+	}
+	out := req.Stderr
+	if out == nil {
+		out = os.Stderr
+	}
+	display, err := progressui.NewDisplay(out, displayMode)
+	if err != nil {
+		return nil, fmt.Errorf("init progress display: %w", err)
+	}
+	var displayErr error
 	var reporter sync.WaitGroup
 	reporter.Add(1)
 	go func() {
 		defer reporter.Done()
-		reportSolveStatus(req.Stderr, statusCh)
+		_, displayErr = display.UpdateFrom(ctx, statusCh)
 	}()
 
 	resp, err := client.Solve(ctx, nil, opt, statusCh)
 	reporter.Wait()
+	if err == nil && displayErr != nil {
+		return nil, fmt.Errorf("progress display: %w", displayErr)
+	}
 	if err != nil {
+		if req.Load {
+			_ = loadTarFile.Close()
+			_ = os.Remove(loadTarPath)
+		}
 		return nil, fmt.Errorf("solve build: %w", err)
 	}
 	if req.Load {
-		if err := <-loadErrCh; err != nil {
+		if err := loadTarFile.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			_ = os.Remove(loadTarPath)
+			return nil, fmt.Errorf("close temp image tar: %w", err)
+		}
+		defer os.Remove(loadTarPath)
+		if err := loadIntoDocker(ctx, loadTarPath, req.Tags, req.Stdout); err != nil {
 			return nil, err
 		}
 	}
-	return &Result{ExporterResponse: resp.ExporterResponse}, nil
+	return &Result{ExporterResponse: resp.ExporterResponse, WaitDuration: waitDuration}, nil
 }
 
 func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {
@@ -197,48 +235,129 @@ func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {
 	return attachables, nil
 }
 
-func reportSolveStatus(w io.Writer, ch <-chan *bkclient.SolveStatus) {
-	if w == nil {
-		w = io.Discard
-	}
-	seenCompleted := map[string]bool{}
-	for status := range ch {
-		for _, vertex := range status.Vertexes {
-			if vertex == nil || vertex.Name == "" {
-				continue
-			}
-			if vertex.Completed != nil && !seenCompleted[vertex.Name] {
-				seenCompleted[vertex.Name] = true
-				_, _ = fmt.Fprintf(w, "=> %s\n", vertex.Name)
-			}
-			if vertex.Error != "" {
-				_, _ = fmt.Fprintf(w, "error: %s\n", vertex.Error)
-			}
-		}
-		for _, log := range status.Logs {
-			if len(log.Data) > 0 {
-				_, _ = w.Write(log.Data)
-			}
-		}
-	}
-}
-
-func loadIntoDocker(ctx context.Context, reader io.Reader, stdout io.Writer) error {
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
-	if err != nil {
-		return fmt.Errorf("connect local docker daemon: %w", err)
-	}
-	defer cli.Close()
-	resp, err := cli.ImageLoad(ctx, reader)
-	if err != nil {
-		return fmt.Errorf("docker image load: %w", err)
-	}
-	defer resp.Body.Close()
+func loadIntoDocker(ctx context.Context, tarPath string, tags []string, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	if _, err := io.Copy(stdout, resp.Body); err != nil {
-		return fmt.Errorf("stream docker load response: %w", err)
+
+	dockerTarPath, cleanup, err := convertOCIArchiveToDockerArchive(tarPath, tags)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	cmd := exec.CommandContext(ctx, "docker", "load", "-i", dockerTarPath)
+	cmd.Stdout = stdout
+	cmd.Stderr = stdout
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker image load: %w", err)
 	}
 	return nil
+}
+
+func convertOCIArchiveToDockerArchive(ociTarPath string, tags []string) (string, func(), error) {
+	tempDir, err := os.MkdirTemp("", "forja-oci-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp oci dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir) }
+
+	if err := extractTar(ociTarPath, tempDir); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("extract oci archive: %w", err)
+	}
+
+	lp, err := layout.FromPath(tempDir)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("open oci layout: %w", err)
+	}
+	index, err := lp.ImageIndex()
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("read oci image index: %w", err)
+	}
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("read oci index manifest: %w", err)
+	}
+	if len(manifest.Manifests) == 0 {
+		cleanup()
+		return "", nil, fmt.Errorf("oci archive does not contain any manifests")
+	}
+
+	img, err := lp.Image(manifest.Manifests[0].Digest)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("read oci image: %w", err)
+	}
+
+	refToImage := make(map[name.Reference]v1.Image, len(tags))
+	for _, tag := range tags {
+		ref, err := name.ParseReference(tag, name.WeakValidation)
+		if err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("parse image tag %q: %w", tag, err)
+		}
+		refToImage[ref] = img
+	}
+
+	dockerTarPath := filepath.Join(tempDir, "docker-image.tar")
+	if err := tarball.MultiRefWriteToFile(dockerTarPath, refToImage); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("write docker archive: %w", err)
+	}
+
+	return dockerTarPath, cleanup, nil
+}
+
+func extractTar(src string, dest string) error {
+	file, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	reader := tar.NewReader(file)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dest, header.Name)
+		cleanDest := filepath.Clean(dest) + string(os.PathSeparator)
+		cleanTarget := filepath.Clean(targetPath)
+		if cleanTarget != filepath.Clean(dest) && !strings.HasPrefix(cleanTarget, cleanDest) {
+			return fmt.Errorf("tar entry escapes extraction dir: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(cleanTarget, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, reader); err != nil {
+				out.Close()
+				return err
+			}
+			if err := out.Close(); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported tar entry type %d for %s", header.Typeflag, header.Name)
+		}
+	}
 }

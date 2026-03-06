@@ -2,6 +2,12 @@ package cloud
 
 import "time"
 
+const (
+	InstanceTagBuildID    = "forja:build-id"
+	InstanceTagArch       = "forja:arch"
+	InstanceTagCertS3Path = "forja-cert-s3-path"
+)
+
 type Identity struct {
 	AccountID string
 	ARN       string
@@ -46,6 +52,7 @@ type LaunchBuilderRequest struct {
 	SubnetID             string
 	InstanceTypeOverride string
 	BuildID              string
+	CertS3Path           string
 	UserData             string
 }
 

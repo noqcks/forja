@@ -13,6 +13,7 @@ import (
 	"github.com/noqcks/forja/internal/cloud"
 	"github.com/noqcks/forja/internal/config"
 	"github.com/noqcks/forja/internal/cost"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
@@ -66,6 +67,9 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	}
 	if err := config.Validate(cfg); err != nil {
 		return err
+	}
+	if opts.push {
+		opts.tags = qualifyTags(opts.tags, cfg.Registry)
 	}
 	if (opts.push || opts.load) && len(opts.tags) == 0 {
 		return fmt.Errorf("at least one --tag is required with --push or --load")
@@ -121,6 +125,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		price    float64
 	}
 	launchedBuilders := make([]launched, len(platforms))
+	launchStart := time.Now()
 	group, gctx := errgroup.WithContext(ctx)
 	for i, platform := range platforms {
 		i := i
@@ -137,7 +142,8 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				SubnetID:             subnetID,
 				InstanceTypeOverride: opts.instanceType,
 				BuildID:              buildID,
-				UserData:             renderUserData(certS3Path, cfg.CacheBucket, cfg.Region, cfg.SelfDestructMinutes),
+				CertS3Path:           certS3Path,
+				UserData:             renderUserData(cfg.CacheBucket, cfg.Region, cfg.SelfDestructMinutes),
 			})
 			if err != nil {
 				return err
@@ -147,7 +153,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				price = 0
 			}
 			launchedBuilders[i] = launched{platform: platform, arch: arch, instance: instance, price: price}
-			fmt.Fprintf(cmd.OutOrStdout(), "Launching builder (%s, %s)... ready\n", instance.InstanceType, cfg.Region)
+			log.Infof("Launching builder (%s, %s)... ready in %.1fs", instance.InstanceType, cfg.Region, time.Since(launchStart).Seconds())
 			return nil
 		})
 	}
@@ -195,6 +201,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			CacheBucket:    cfg.CacheBucket,
 			CacheRegion:    cfg.Region,
 			CacheName:      cacheName,
+			Progress:       opts.progress,
 			Stdout:         cmd.OutOrStdout(),
 			Stderr:         cmd.ErrOrStderr(),
 		})
@@ -202,16 +209,19 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			return err
 		}
 		duration := time.Since(start)
+		launchDuration := start.Sub(launchStart)
 		estimated := cost.Estimate(duration.Seconds(), builder.price)
-		fmt.Fprintln(cmd.OutOrStdout(), "\nBuild complete.")
-		fmt.Fprintf(cmd.OutOrStdout(), "  Duration:  %.1fs\n", duration.Seconds())
-		fmt.Fprintf(cmd.OutOrStdout(), "  Instance:  %s (%s)\n", builder.instance.InstanceType, cfg.Region)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Cost:      $%.4f\n", estimated)
+		log.Info("Build complete.")
+		log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
+		log.Infof("  Ready:     %.1fs", result.WaitDuration.Seconds())
+		log.Infof("  Duration:  %.1fs", duration.Seconds())
+		log.Infof("  Instance:  %s (%s)", builder.instance.InstanceType, cfg.Region)
+		log.Infof("  Cost:      $%.4f", estimated)
 		if len(opts.tags) > 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Image:     %s\n", opts.tags[0])
+			log.Infof("  Image:     %s", opts.tags[0])
 		}
 		if digest := result.ExporterResponse[exptypes.ExporterImageDigestKey]; digest != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Digest:    %s\n", digest)
+			log.Infof("  Digest:    %s", digest)
 		}
 		return nil
 	}
@@ -256,6 +266,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				CacheBucket:    cfg.CacheBucket,
 				CacheRegion:    cfg.Region,
 				CacheName:      cacheName,
+				Progress:       opts.progress,
 				Stdout:         cmd.OutOrStdout(),
 				Stderr:         cmd.ErrOrStderr(),
 			})
@@ -288,16 +299,18 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	}
 
 	duration := time.Since(start)
+	launchDuration := start.Sub(launchStart)
 	var totalCost float64
 	for _, builder := range launchedBuilders {
 		totalCost += cost.Estimate(duration.Seconds(), builder.price)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "\nBuild complete.")
-	fmt.Fprintf(cmd.OutOrStdout(), "  Duration:  %.1fs\n", duration.Seconds())
-	fmt.Fprintf(cmd.OutOrStdout(), "  Platforms: %s\n", strings.Join(platforms, ","))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Cost:      $%.4f\n", totalCost)
+	log.Info("Build complete.")
+	log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
+	log.Infof("  Duration:  %.1fs", duration.Seconds())
+	log.Infof("  Platforms: %s", strings.Join(platforms, ","))
+	log.Infof("  Cost:      $%.4f", totalCost)
 	if len(opts.tags) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Image:     %s\n", opts.tags[0])
+		log.Infof("  Image:     %s", opts.tags[0])
 	}
 	return nil
 }

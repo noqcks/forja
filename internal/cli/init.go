@@ -3,121 +3,59 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
-	"github.com/AlecAivazis/survey/v2"
 	"github.com/noqcks/forja/internal/cloud"
 	awsprovider "github.com/noqcks/forja/internal/cloud/aws"
 	"github.com/noqcks/forja/internal/config"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
+type initOptions struct {
+	noTUI       bool
+	region      string
+	size        string
+	registry    string
+	amd64AMI    string
+	arm64AMI    string
+	customAMD64 string
+	customARM64 string
+}
+
 func newInitCmd(root *rootOptions) *cobra.Command {
-	return &cobra.Command{
+	opts := &initOptions{}
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Provision Forja AWS infrastructure",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			return runInit(ctx, cmd, root)
+			return runInit(ctx, cmd, root, opts)
 		},
 	}
+
+	cmd.Flags().BoolVar(&opts.noTUI, "no-tui", false, "Disable the interactive init UI and use flags only")
+	cmd.Flags().StringVar(&opts.region, "region", "us-east-1", "AWS region")
+	cmd.Flags().StringVar(&opts.size, "size", "small", "Builder size preset: small, medium, large, or custom")
+	cmd.Flags().StringVar(&opts.registry, "registry", "", "Default registry prefix")
+	cmd.Flags().StringVar(&opts.amd64AMI, "amd64-ami", defaultAMD64AMI, "Published amd64 AMI ID")
+	cmd.Flags().StringVar(&opts.arm64AMI, "arm64-ami", defaultARM64AMI, "Published arm64 AMI ID")
+	cmd.Flags().StringVar(&opts.customAMD64, "amd64-instance", "c7a.large", "Custom amd64 instance type when --size=custom")
+	cmd.Flags().StringVar(&opts.customARM64, "arm64-instance", "c7g.large", "Custom arm64 instance type when --size=custom")
+	return cmd
 }
 
-func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions) error {
-	region := "us-east-1"
-	defaultPlatform := "linux/amd64"
-	sizeChoice := "Small"
-	registry := ""
-	amd64AMI := ""
-	arm64AMI := ""
-	customAMD64 := "c7a.large"
-	customARM64 := "c7g.large"
-
-	questions := []*survey.Question{
-		{
-			Name: "region",
-			Prompt: &survey.Input{
-				Message: "AWS region:",
-				Default: region,
-			},
-		},
-		{
-			Name: "defaultPlatform",
-			Prompt: &survey.Select{
-				Message: "Default platform:",
-				Default: defaultPlatform,
-				Options: []string{"linux/amd64", "linux/arm64"},
-			},
-		},
-		{
-			Name: "sizeChoice",
-			Prompt: &survey.Select{
-				Message: "Instance size for builds:",
-				Default: sizeChoice,
-				Options: []string{
-					"Small (c7a.large / c7g.large)",
-					"Medium (c7a.xlarge / c7g.xlarge)",
-					"Large (c7a.2xlarge / c7g.2xlarge)",
-					"Custom",
-				},
-			},
-		},
-		{
-			Name: "registry",
-			Prompt: &survey.Input{
-				Message: "Default registry (optional):",
-				Default: registry,
-			},
-		},
-		{
-			Name: "amd64AMI",
-			Prompt: &survey.Input{
-				Message: "Published amd64 AMI ID:",
-				Default: amd64AMI,
-			},
-			Validate: survey.Required,
-		},
-		{
-			Name: "arm64AMI",
-			Prompt: &survey.Input{
-				Message: "Published arm64 AMI ID:",
-				Default: arm64AMI,
-			},
-			Validate: survey.Required,
-		},
-	}
-
-	answers := struct {
-		Region          string
-		DefaultPlatform string
-		SizeChoice      string
-		Registry        string
-		AMD64AMI        string
-		ARM64AMI        string
-	}{}
-	if err := survey.Ask(questions, &answers); err != nil {
+func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *initOptions) error {
+	answers, err := collectInitAnswers(cmd, opts)
+	if err != nil {
 		return err
 	}
 
-	instances := map[string]string{}
-	switch answers.SizeChoice {
-	case "Medium (c7a.xlarge / c7g.xlarge)":
-		instances["amd64"] = "c7a.xlarge"
-		instances["arm64"] = "c7g.xlarge"
-	case "Large (c7a.2xlarge / c7g.2xlarge)":
-		instances["amd64"] = "c7a.2xlarge"
-		instances["arm64"] = "c7g.2xlarge"
-	case "Custom":
-		if err := survey.AskOne(&survey.Input{Message: "Custom amd64 instance type:", Default: customAMD64}, &customAMD64, survey.WithValidator(survey.Required)); err != nil {
-			return err
-		}
-		if err := survey.AskOne(&survey.Input{Message: "Custom arm64 instance type:", Default: customARM64}, &customARM64, survey.WithValidator(survey.Required)); err != nil {
-			return err
-		}
-		instances["amd64"] = customAMD64
-		instances["arm64"] = customARM64
-	default:
-		instances["amd64"] = "c7a.large"
-		instances["arm64"] = "c7g.large"
+	instances, err := instanceTypesForSizeChoice(answers.SizeChoice, answers.CustomAMD64, answers.CustomARM64)
+	if err != nil {
+		return err
 	}
 
 	provider, err := awsprovider.New(ctx, answers.Region, root.profile)
@@ -130,8 +68,8 @@ func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions) error {
 	}
 
 	cacheBucket := fmt.Sprintf("forja-cache-%s-%s", identity.AccountID, answers.Region)
-	fmt.Fprintf(cmd.OutOrStdout(), "AWS credentials detected (account: %s)\n\n", identity.AccountID)
-	fmt.Fprintln(cmd.OutOrStdout(), "Creating AWS resources...")
+	log.Infof("AWS credentials detected (account: %s)", identity.AccountID)
+	log.Info("Creating AWS resources...")
 
 	result, err := provider.EnsureInfrastructure(ctx, cloud.ProvisionRequest{
 		Region:              answers.Region,
@@ -152,7 +90,6 @@ func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions) error {
 
 	cfg := config.Default()
 	cfg.Region = answers.Region
-	cfg.DefaultPlatform = answers.DefaultPlatform
 	cfg.Instances = instances
 	cfg.Registry = answers.Registry
 	cfg.CacheBucket = cacheBucket
@@ -175,13 +112,75 @@ func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions) error {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "  [ok] S3 bucket: %s\n", cfg.CacheBucket)
-	fmt.Fprintf(cmd.OutOrStdout(), "  [ok] IAM role: %s\n", cfg.Resources.IAMRoleName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  [ok] Security group: %s (%s)\n", cfg.Resources.SecurityGroupID, cfg.Resources.SecurityGroupName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  [ok] Launch template: %s (amd64)\n", cfg.Resources.LaunchTemplates["amd64"])
-	fmt.Fprintf(cmd.OutOrStdout(), "  [ok] Launch template: %s (arm64)\n", cfg.Resources.LaunchTemplates["arm64"])
+	log.Infof("[ok] S3 bucket: %s", cfg.CacheBucket)
+	log.Infof("[ok] IAM role: %s", cfg.Resources.IAMRoleName)
+	log.Infof("[ok] Security group: %s (%s)", cfg.Resources.SecurityGroupID, cfg.Resources.SecurityGroupName)
+	log.Infof("[ok] Launch template: %s (amd64)", cfg.Resources.LaunchTemplates["amd64"])
+	log.Infof("[ok] Launch template: %s (arm64)", cfg.Resources.LaunchTemplates["arm64"])
 	path, _ := config.ConfigPath()
-	fmt.Fprintf(cmd.OutOrStdout(), "\nConfig written to %s\n\n", path)
-	fmt.Fprintln(cmd.OutOrStdout(), "Ready! Try: forja build .")
+	log.Infof("Config written to %s", path)
+	log.Info("Ready! Try: forja build .")
 	return nil
+}
+
+func collectInitAnswers(cmd *cobra.Command, opts *initOptions) (initAnswers, error) {
+	if shouldUseFlagInit(cmd, opts) {
+		answers := initAnswers{
+			Region:      strings.TrimSpace(opts.region),
+			SizeChoice:  normalizeSizeChoice(opts.size),
+			Registry:    strings.TrimSpace(opts.registry),
+			AMD64AMI:    strings.TrimSpace(opts.amd64AMI),
+			ARM64AMI:    strings.TrimSpace(opts.arm64AMI),
+			CustomAMD64: strings.TrimSpace(opts.customAMD64),
+			CustomARM64: strings.TrimSpace(opts.customARM64),
+		}
+		if err := validateInitAnswers(answers); err != nil {
+			return initAnswers{}, err
+		}
+		return answers, nil
+	}
+	return collectInitAnswersTUI(cmd)
+}
+
+func shouldUseFlagInit(cmd *cobra.Command, opts *initOptions) bool {
+	if opts.noTUI {
+		return true
+	}
+	for _, name := range []string{
+		"region",
+		"size",
+		"registry",
+		"amd64-ami",
+		"arm64-ami",
+		"amd64-instance",
+		"arm64-instance",
+	} {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout())
+}
+
+func isTerminal(stream any) bool {
+	file, ok := stream.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
+}
+
+func normalizeSizeChoice(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "small", initSizeSmall:
+		return initSizeSmall
+	case "medium", initSizeMedium:
+		return initSizeMedium
+	case "large", initSizeLarge:
+		return initSizeLarge
+	case "custom", initSizeCustom:
+		return initSizeCustom
+	default:
+		return strings.TrimSpace(value)
+	}
 }

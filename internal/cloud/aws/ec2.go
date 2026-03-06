@@ -125,6 +125,12 @@ func (p *Provider) ensureSecurityGroup(ctx context.Context, vpcID string) (strin
 func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]string, instances map[string]string, sgID string) (map[string]string, error) {
 	result := map[string]string{}
 	for _, arch := range []string{"amd64", "arm64"} {
+		if strings.TrimSpace(amis[arch]) == "" {
+			return nil, fmt.Errorf("published AMI for %s is required", arch)
+		}
+		if strings.TrimSpace(instances[arch]) == "" {
+			return nil, fmt.Errorf("instance type for %s is required", arch)
+		}
 		name := "forja-builder-" + arch
 		data := &ec2types.RequestLaunchTemplateData{
 			ImageId:      sdkaws.String(amis[arch]),
@@ -136,8 +142,9 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 				Name: sdkaws.String(instanceProfileName),
 			},
 			MetadataOptions: &ec2types.LaunchTemplateInstanceMetadataOptionsRequest{
-				HttpTokens:   ec2types.LaunchTemplateHttpTokensStateRequired,
-				HttpEndpoint: ec2types.LaunchTemplateInstanceMetadataEndpointStateEnabled,
+				HttpTokens:           ec2types.LaunchTemplateHttpTokensStateRequired,
+				HttpEndpoint:         ec2types.LaunchTemplateInstanceMetadataEndpointStateEnabled,
+				InstanceMetadataTags: ec2types.LaunchTemplateInstanceMetadataTagsStateEnabled,
 			},
 			BlockDeviceMappings: []ec2types.LaunchTemplateBlockDeviceMappingRequest{
 				{
@@ -154,8 +161,11 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 		desc, err := p.ec2.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{
 			LaunchTemplateNames: []string{name},
 		})
-		if err != nil && !strings.Contains(err.Error(), "InvalidLaunchTemplateName.NotFoundException") {
-			return nil, fmt.Errorf("describe launch templates: %w", err)
+		if err != nil {
+			if !strings.Contains(err.Error(), "InvalidLaunchTemplateName.NotFoundException") {
+				return nil, fmt.Errorf("describe launch templates: %w", err)
+			}
+			desc = &ec2.DescribeLaunchTemplatesOutput{}
 		}
 		if len(desc.LaunchTemplates) == 0 {
 			out, createErr := p.ec2.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
@@ -201,19 +211,14 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 		},
 		InstanceType: ec2types.InstanceType(req.InstanceTypeOverride),
 		UserData:     sdkaws.String(encodeUserData(req.UserData)),
-		NetworkInterfaces: []ec2types.InstanceNetworkInterfaceSpecification{
-			{
-				DeviceIndex:              sdkaws.Int32(0),
-				AssociatePublicIpAddress: sdkaws.Bool(true),
-				SubnetId:                 sdkaws.String(req.SubnetID),
-			},
-		},
+		SubnetId:     sdkaws.String(req.SubnetID),
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
 				Tags: append(defaultTags("forja-builder"), []ec2types.Tag{
-					{Key: sdkaws.String("forja:build-id"), Value: sdkaws.String(req.BuildID)},
-					{Key: sdkaws.String("forja:arch"), Value: sdkaws.String(req.Architecture)},
+					{Key: sdkaws.String(cloud.InstanceTagBuildID), Value: sdkaws.String(req.BuildID)},
+					{Key: sdkaws.String(cloud.InstanceTagArch), Value: sdkaws.String(req.Architecture)},
+					{Key: sdkaws.String(cloud.InstanceTagCertS3Path), Value: sdkaws.String(req.CertS3Path)},
 				}...),
 			},
 		},

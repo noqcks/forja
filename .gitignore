@@ -1,0 +1,8 @@
+# Compiled binary
+forja
+
+# Packer build artifacts
+packer/manifest.json
+
+# GoReleaser build output
+dist/
