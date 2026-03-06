@@ -15,8 +15,8 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
-	log "github.com/sirupsen/logrus"
-	"github.com/tonistiigi/fsutil"
+	"github.com/moby/buildkit/util/progress/progressui"
+"github.com/tonistiigi/fsutil"
 )
 
 type Request struct {
@@ -38,6 +38,7 @@ type Request struct {
 	CacheBucket    string
 	CacheRegion    string
 	CacheName      string
+	Progress       string
 	Stdout         io.Writer
 	Stderr         io.Writer
 }
@@ -152,15 +153,31 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	statusCh := make(chan *bkclient.SolveStatus)
+	displayMode := progressui.DisplayMode(req.Progress)
+	if displayMode == "" {
+		displayMode = progressui.AutoMode
+	}
+	out := req.Stderr
+	if out == nil {
+		out = os.Stderr
+	}
+	display, err := progressui.NewDisplay(out, displayMode)
+	if err != nil {
+		return nil, fmt.Errorf("init progress display: %w", err)
+	}
+	var displayErr error
 	var reporter sync.WaitGroup
 	reporter.Add(1)
 	go func() {
 		defer reporter.Done()
-		reportSolveStatus(req.Stderr, statusCh)
+		_, displayErr = display.UpdateFrom(ctx, statusCh)
 	}()
 
 	resp, err := client.Solve(ctx, nil, opt, statusCh)
 	reporter.Wait()
+	if err == nil && displayErr != nil {
+		return nil, fmt.Errorf("progress display: %w", displayErr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("solve build: %w", err)
 	}
@@ -198,31 +215,6 @@ func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {
 	return attachables, nil
 }
 
-func reportSolveStatus(w io.Writer, ch <-chan *bkclient.SolveStatus) {
-	if w == nil {
-		w = io.Discard
-	}
-	seenCompleted := map[string]bool{}
-	for status := range ch {
-		for _, vertex := range status.Vertexes {
-			if vertex == nil || vertex.Name == "" {
-				continue
-			}
-			if vertex.Completed != nil && !seenCompleted[vertex.Name] {
-				seenCompleted[vertex.Name] = true
-				log.Infof("=> %s", vertex.Name)
-			}
-			if vertex.Error != "" {
-				log.Errorf("error: %s", vertex.Error)
-			}
-		}
-		for _, entry := range status.Logs {
-			if len(entry.Data) > 0 {
-				_, _ = w.Write(entry.Data)
-			}
-		}
-	}
-}
 
 func loadIntoDocker(ctx context.Context, reader io.Reader, stdout io.Writer) error {
 	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())

@@ -8,6 +8,8 @@ func TestValidateInitAnswers(t *testing.T) {
 	valid := initAnswers{
 		Region:     "us-east-1",
 		SizeChoice: initSizeSmall,
+		AMD64AMI:   "ami-0abc",
+		ARM64AMI:   "ami-0def",
 	}
 	if err := validateInitAnswers(valid); err != nil {
 		t.Fatalf("validateInitAnswers() unexpected error = %v", err)
@@ -15,7 +17,17 @@ func TestValidateInitAnswers(t *testing.T) {
 
 	if err := validateInitAnswers(initAnswers{
 		Region:     "us-east-1",
+		SizeChoice: initSizeSmall,
+		ARM64AMI:   "ami-0def",
+	}); err == nil {
+		t.Fatal("expected amd64 AMI to be required")
+	}
+
+	if err := validateInitAnswers(initAnswers{
+		Region:     "us-east-1",
 		SizeChoice: initSizeCustom,
+		AMD64AMI:   "ami-0abc",
+		ARM64AMI:   "ami-0def",
 	}); err == nil {
 		t.Fatal("expected custom instance types to be required")
 	}

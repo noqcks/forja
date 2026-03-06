@@ -125,6 +125,12 @@ func (p *Provider) ensureSecurityGroup(ctx context.Context, vpcID string) (strin
 func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]string, instances map[string]string, sgID string) (map[string]string, error) {
 	result := map[string]string{}
 	for _, arch := range []string{"amd64", "arm64"} {
+		if strings.TrimSpace(amis[arch]) == "" {
+			return nil, fmt.Errorf("published AMI for %s is required", arch)
+		}
+		if strings.TrimSpace(instances[arch]) == "" {
+			return nil, fmt.Errorf("instance type for %s is required", arch)
+		}
 		name := "forja-builder-" + arch
 		data := &ec2types.RequestLaunchTemplateData{
 			ImageId:      sdkaws.String(amis[arch]),

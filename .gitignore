@@ -1,0 +1,5 @@
+# Compiled binary
+forja
+
+# Packer build artifacts
+packer/manifest.json

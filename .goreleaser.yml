@@ -1,0 +1,39 @@
+version: 2
+
+builds:
+  - main: ./cmd/forja
+    binary: forja
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/noqcks/forja/internal/version.Version={{.Version}}
+      - -X github.com/noqcks/forja/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/noqcks/forja/internal/version.Date={{.Date}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "forja_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: noqcks
+    name: forja
