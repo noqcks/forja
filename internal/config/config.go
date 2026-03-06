@@ -132,11 +132,6 @@ func Validate(cfg *Config) error {
 	if len(cfg.Instances) == 0 {
 		return errors.New("instances is required")
 	}
-	for _, arch := range []string{"amd64", "arm64"} {
-		if cfg.Resources.AMI[arch] == "" && cfg.PublishedAMI[arch] == "" {
-			return fmt.Errorf("ami for %s is required", arch)
-		}
-	}
 	return nil
 }
 

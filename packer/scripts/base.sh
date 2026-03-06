@@ -19,9 +19,6 @@ rm -rf /tmp/aws
 unzip -q /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 
-curl -fsSL -o /tmp/amazon-ssm-agent.deb "https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_${SSM_ARCH}/amazon-ssm-agent.deb"
-dpkg -i /tmp/amazon-ssm-agent.deb || apt-get install -f -y
-
 curl -fsSL -o /tmp/buildkit.tgz "https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-${BUILDKIT_ARCH}.tar.gz"
 tar -xzf /tmp/buildkit.tgz -C /tmp
 install -m 0755 /tmp/bin/buildctl /usr/local/bin/buildctl
@@ -54,5 +51,4 @@ package_reboot_if_required: false
 EOF
 
 systemctl daemon-reload
-systemctl enable amazon-ssm-agent
 systemctl disable buildkitd.service

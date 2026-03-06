@@ -146,6 +146,7 @@ build {
   sources = ["source.amazon-ebs.forja_builder"]
 
   provisioner "shell" {
+    execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E {{ .Path }}"
     environment_vars = [
       "FORJA_ARCH=${var.architecture}",
       "AWSCLI_ARCH=${local.build.awscli_arch}",

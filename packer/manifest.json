@@ -1,0 +1,23 @@
+{
+  "builds": [
+    {
+      "name": "forja_builder",
+      "builder_type": "amazon-ebs",
+      "build_time": 1772830277,
+      "files": null,
+      "artifact_id": "us-east-1:ami-0c8358f5197c22ab7",
+      "packer_run_uuid": "964d60a3-b62c-9d17-289d-14d5c826cd02",
+      "custom_data": null
+    },
+    {
+      "name": "forja_builder",
+      "builder_type": "amazon-ebs",
+      "build_time": 1772830306,
+      "files": null,
+      "artifact_id": "us-east-1:ami-00ffcc0c3fd919bba",
+      "packer_run_uuid": "88b0b10b-8184-f3da-a751-e23cc5ef05a5",
+      "custom_data": null
+    }
+  ],
+  "last_run_uuid": "88b0b10b-8184-f3da-a751-e23cc5ef05a5"
+}

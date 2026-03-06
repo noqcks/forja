@@ -14,9 +14,6 @@ func TestSaveLoadAndExistsRoundTrip(t *testing.T) {
 	cfg := Default()
 	cfg.Region = "us-east-1"
 	cfg.CacheBucket = "forja-cache-test"
-	cfg.PublishedAMI["amd64"] = "ami-amd64"
-	cfg.PublishedAMI["arm64"] = "ami-arm64"
-
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -52,13 +49,11 @@ func TestValidateRequiresCoreFields(t *testing.T) {
 
 	cfg := Default()
 	if err := Validate(cfg); err == nil {
-		t.Fatal("expected validation to fail without region/cache bucket/amis")
+		t.Fatal("expected validation to fail without region/cache bucket")
 	}
 
 	cfg.Region = "us-east-1"
 	cfg.CacheBucket = "forja-cache-test"
-	cfg.PublishedAMI["amd64"] = "ami-amd64"
-	cfg.PublishedAMI["arm64"] = "ami-arm64"
 	if err := Validate(cfg); err != nil {
 		t.Fatalf("Validate() unexpected error = %v", err)
 	}

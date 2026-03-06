@@ -64,6 +64,7 @@ func renderUserData(certS3Path string, cacheBucket string, region string, selfDe
 set -euo pipefail
 
 mkdir -p /etc/buildkit/certs
+mkdir -p /etc/systemd/system/buildkitd.service.d
 
 CERT_S3_PATH=%q
 CACHE_REGION=%q
@@ -73,16 +74,57 @@ aws s3 cp "${CERT_S3_PATH}/server-cert.pem" /etc/buildkit/certs/server-cert.pem
 aws s3 cp "${CERT_S3_PATH}/server-key.pem" /etc/buildkit/certs/server-key.pem
 aws s3 cp "${CERT_S3_PATH}/ca-cert.pem" /etc/buildkit/certs/ca-cert.pem
 
-nohup buildkitd \
-  --addr tcp://0.0.0.0:8372 \
-  --tlscacert /etc/buildkit/certs/ca-cert.pem \
-  --tlscert /etc/buildkit/certs/server-cert.pem \
-  --tlskey /etc/buildkit/certs/server-key.pem > /var/log/buildkitd.log 2>&1 &
+cat >/etc/systemd/system/buildkitd.service.d/override.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/buildkitd --addr tcp://0.0.0.0:8372 --tlscacert /etc/buildkit/certs/ca-cert.pem --tlscert /etc/buildkit/certs/server-cert.pem --tlskey /etc/buildkit/certs/server-key.pem
+EOF
 
-(sleep $((SELF_DESTRUCT_MINUTES * 60)) && \
-  INSTANCE_ID=$(TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 30") && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id) && \
-  aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$CACHE_REGION") &
-`, certS3Path, region, selfDestructMinutes)
+cat >/usr/local/bin/forja-self-destruct.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+CACHE_REGION=%q
+
+for attempt in 1 2 3 4 5; do
+  TOKEN=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 30")
+  INSTANCE_ID=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+  aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$CACHE_REGION" && exit 0
+  sleep 5
+done
+
+exit 1
+EOF
+chmod 0755 /usr/local/bin/forja-self-destruct.sh
+
+cat >/etc/systemd/system/forja-self-destruct.service <<'EOF'
+[Unit]
+Description=Terminate this Forja builder instance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/forja-self-destruct.sh
+EOF
+
+cat >/etc/systemd/system/forja-self-destruct.timer <<EOF
+[Unit]
+Description=Auto-terminate this Forja builder instance
+
+[Timer]
+OnBootSec=%dm
+AccuracySec=1s
+Unit=forja-self-destruct.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now buildkitd.service
+systemctl enable --now forja-self-destruct.timer
+`, certS3Path, region, selfDestructMinutes, region, selfDestructMinutes)
 }
 
 func cacheNameForContext(contextDir string) string {

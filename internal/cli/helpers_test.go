@@ -60,7 +60,11 @@ func TestPlatformHelpersAndUserData(t *testing.T) {
 		`CERT_S3_PATH="s3://bucket/builds/x/certs"`,
 		`CACHE_REGION="us-east-1"`,
 		`SELF_DESTRUCT_MINUTES=60`,
-		"buildkitd",
+		"/etc/systemd/system/buildkitd.service.d/override.conf",
+		"/usr/local/bin/forja-self-destruct.sh",
+		"/etc/systemd/system/forja-self-destruct.timer",
+		"OnBootSec=60m",
+		"systemctl enable --now forja-self-destruct.timer",
 	} {
 		if !strings.Contains(userData, want) {
 			t.Fatalf("user data missing %q\n%s", want, userData)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -15,9 +16,54 @@ const (
 	initSizeMedium = "Medium (c7a.xlarge / c7g.xlarge)"
 	initSizeLarge  = "Large (c7a.2xlarge / c7g.2xlarge)"
 	initSizeCustom = "Custom"
+
+	// TODO: replace with real published AMI IDs after first packer build
+	defaultAMD64AMI = ""
+	defaultARM64AMI = ""
 )
 
-var errInitCanceled = errors.New("init canceled")
+var (
+	errInitCanceled = errors.New("init canceled")
+
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("205"))
+
+	subtitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
+
+	focusedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205"))
+
+	blurredStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+
+	labelStyle = lipgloss.NewStyle().
+			Bold(true)
+
+	focusedLabelStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("205"))
+
+	cursorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205"))
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+
+	selectedDot = focusedStyle.Render("●")
+	unselectedDot = blurredStyle.Render("○")
+
+	focusedButton = focusedStyle.Render("[ Submit ]")
+	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
+
+	focusedCancelButton = focusedStyle.Render("[ Cancel ]")
+	blurredCancelButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Cancel"))
+)
 
 var initSizeOptions = []string{
 	initSizeSmall,
@@ -42,8 +88,6 @@ const (
 	initFocusRegion initFocus = iota
 	initFocusSize
 	initFocusRegistry
-	initFocusAMD64AMI
-	initFocusARM64AMI
 	initFocusCustomAMD64
 	initFocusCustomARM64
 	initFocusSubmit
@@ -53,8 +97,6 @@ const (
 type initModel struct {
 	regionInput      textinput.Model
 	registryInput    textinput.Model
-	amd64AMIInput    textinput.Model
-	arm64AMIInput    textinput.Model
 	customAMD64Input textinput.Model
 	customARM64Input textinput.Model
 	sizeIndex        int
@@ -91,23 +133,25 @@ func collectInitAnswers(cmd *cobra.Command) (initAnswers, error) {
 
 func newInitModel() initModel {
 	model := initModel{
-		regionInput:      newInitTextInput("us-east-1"),
-		registryInput:    newInitTextInput(""),
-		amd64AMIInput:    newInitTextInput(""),
-		arm64AMIInput:    newInitTextInput(""),
-		customAMD64Input: newInitTextInput("c7a.large"),
-		customARM64Input: newInitTextInput("c7g.large"),
+		regionInput:      newInitTextInput("us-east-1", "us-east-1"),
+		registryInput:    newInitTextInput("", "ghcr.io/org"),
+		customAMD64Input: newInitTextInput("c7a.large", "c7a.large"),
+		customARM64Input: newInitTextInput("c7g.large", "c7g.large"),
 	}
-	model.setFocus()
+	model.applyFocusStyles()
 	return model
 }
 
-func newInitTextInput(defaultValue string) textinput.Model {
+func newInitTextInput(defaultValue, placeholder string) textinput.Model {
 	input := textinput.New()
-	input.Prompt = ""
+	input.Prompt = "  "
 	input.CharLimit = 512
-	input.Width = 56
-	input.SetValue(defaultValue)
+	input.Width = 40
+	input.Placeholder = placeholder
+	input.Cursor.Style = cursorStyle
+	if defaultValue != "" {
+		input.SetValue(defaultValue)
+	}
 	return input
 }
 
@@ -133,7 +177,7 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sizeIndex--
 				m.errMessage = ""
 				m.clampFocus()
-				m.setFocus()
+				m.applyFocusStyles()
 			}
 			return m, nil
 		case "right":
@@ -141,7 +185,7 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sizeIndex++
 				m.errMessage = ""
 				m.clampFocus()
-				m.setFocus()
+				m.applyFocusStyles()
 			}
 			return m, nil
 		case "enter":
@@ -171,23 +215,29 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m initModel) View() string {
 	var b strings.Builder
 
-	b.WriteString("Forja init\n\n")
-	b.WriteString("Configure the AWS resources that forja should provision.\n")
-	b.WriteString("Tab or Up/Down moves between fields. Left/Right changes instance size. Enter continues. Esc cancels.\n\n")
-	b.WriteString(m.renderInput(initFocusRegion, "AWS region", m.regionInput.View(), false))
+	b.WriteString(titleStyle.Render("Forja Init"))
+	b.WriteString("\n\n")
+	b.WriteString(subtitleStyle.Render("Configure the AWS resources that forja should provision."))
+	b.WriteString("\n\n")
+
+	b.WriteString(m.renderField(initFocusRegion, "AWS region", m.regionInput.View()))
 	b.WriteString(m.renderSizeChoice())
-	b.WriteString(m.renderInput(initFocusRegistry, "Default registry (optional)", m.registryInput.View(), false))
-	b.WriteString(m.renderInput(initFocusAMD64AMI, "Published amd64 AMI ID", m.amd64AMIInput.View(), true))
-	b.WriteString(m.renderInput(initFocusARM64AMI, "Published arm64 AMI ID", m.arm64AMIInput.View(), true))
+	b.WriteString(m.renderField(initFocusRegistry, "Default registry", m.registryInput.View()))
 	if m.usesCustomInstances() {
-		b.WriteString(m.renderInput(initFocusCustomAMD64, "Custom amd64 instance type", m.customAMD64Input.View(), true))
-		b.WriteString(m.renderInput(initFocusCustomARM64, "Custom arm64 instance type", m.customARM64Input.View(), true))
+		b.WriteString(m.renderField(initFocusCustomAMD64, "Custom amd64 instance", m.customAMD64Input.View()))
+		b.WriteString(m.renderField(initFocusCustomARM64, "Custom arm64 instance", m.customARM64Input.View()))
 	}
+
+	b.WriteString("\n")
 	b.WriteString(m.renderButtons())
+
 	if m.errMessage != "" {
-		b.WriteString("\nerror: ")
-		b.WriteString(m.errMessage)
+		b.WriteString("\n")
+		b.WriteString(errorStyle.Render("  Error: " + m.errMessage))
 	}
+
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("  ↑/↓ navigate • ←/→ change size • enter confirm • esc cancel"))
 	b.WriteString("\n")
 
 	return b.String()
@@ -203,16 +253,6 @@ func (m *initModel) updateFocusedInput(msg tea.Msg) tea.Cmd {
 	case initFocusRegistry:
 		var cmd tea.Cmd
 		m.registryInput, cmd = m.registryInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusAMD64AMI:
-		var cmd tea.Cmd
-		m.amd64AMIInput, cmd = m.amd64AMIInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusARM64AMI:
-		var cmd tea.Cmd
-		m.arm64AMIInput, cmd = m.arm64AMIInput.Update(msg)
 		m.errMessage = ""
 		return cmd
 	case initFocusCustomAMD64:
@@ -235,8 +275,6 @@ func (m initModel) visibleItems() []initFocus {
 		initFocusRegion,
 		initFocusSize,
 		initFocusRegistry,
-		initFocusAMD64AMI,
-		initFocusARM64AMI,
 	}
 	if m.usesCustomInstances() {
 		items = append(items, initFocusCustomAMD64, initFocusCustomARM64)
@@ -256,7 +294,7 @@ func (m *initModel) moveFocus(delta int) {
 	items := m.visibleItems()
 	m.focusIndex = (m.focusIndex + delta + len(items)) % len(items)
 	m.errMessage = ""
-	m.setFocus()
+	m.applyFocusStyles()
 }
 
 func (m *initModel) clampFocus() {
@@ -269,27 +307,30 @@ func (m *initModel) clampFocus() {
 	}
 }
 
-func (m *initModel) setFocus() {
-	m.regionInput.Blur()
-	m.registryInput.Blur()
-	m.amd64AMIInput.Blur()
-	m.arm64AMIInput.Blur()
-	m.customAMD64Input.Blur()
-	m.customARM64Input.Blur()
+func (m *initModel) applyFocusStyles() {
+	inputs := []*textinput.Model{
+		&m.regionInput,
+		&m.registryInput,
+		&m.customAMD64Input,
+		&m.customARM64Input,
+	}
+	focusItems := []initFocus{
+		initFocusRegion,
+		initFocusRegistry,
+		initFocusCustomAMD64,
+		initFocusCustomARM64,
+	}
 
-	switch m.focusedItem() {
-	case initFocusRegion:
-		m.regionInput.Focus()
-	case initFocusRegistry:
-		m.registryInput.Focus()
-	case initFocusAMD64AMI:
-		m.amd64AMIInput.Focus()
-	case initFocusARM64AMI:
-		m.arm64AMIInput.Focus()
-	case initFocusCustomAMD64:
-		m.customAMD64Input.Focus()
-	case initFocusCustomARM64:
-		m.customARM64Input.Focus()
+	for i, input := range inputs {
+		if m.focusedItem() == focusItems[i] {
+			input.Focus()
+			input.PromptStyle = focusedStyle
+			input.TextStyle = focusedStyle
+		} else {
+			input.Blur()
+			input.PromptStyle = lipgloss.NewStyle()
+			input.TextStyle = lipgloss.NewStyle()
+		}
 	}
 }
 
@@ -297,52 +338,60 @@ func (m initModel) usesCustomInstances() bool {
 	return initSizeOptions[m.sizeIndex] == initSizeCustom
 }
 
-func (m initModel) renderInput(focus initFocus, label string, value string, required bool) string {
-	prefix := "  "
-	if m.focusedItem() == focus {
-		prefix = "> "
+func (m initModel) renderField(focus initFocus, label string, inputView string) string {
+	focused := m.focusedItem() == focus
+
+	cursor := "  "
+	style := labelStyle
+	if focused {
+		cursor = focusedStyle.Render("> ")
+		style = focusedLabelStyle
 	}
 
-	suffix := ""
-	if required {
-		suffix = " *"
-	}
-
-	return fmt.Sprintf("%s%s%s\n  %s\n\n", prefix, label, suffix, value)
+	return fmt.Sprintf("%s%s\n%s\n\n", cursor, style.Render(label), inputView)
 }
 
 func (m initModel) renderSizeChoice() string {
-	prefix := "  "
-	if m.focusedItem() == initFocusSize {
-		prefix = "> "
+	focused := m.focusedItem() == initFocusSize
+
+	cursor := "  "
+	style := labelStyle
+	if focused {
+		cursor = focusedStyle.Render("> ")
+		style = focusedLabelStyle
 	}
 
 	var b strings.Builder
-	b.WriteString(prefix)
-	b.WriteString("Instance size for builds\n")
+	b.WriteString(cursor)
+	b.WriteString(style.Render("Instance size"))
+	b.WriteString("\n")
+
 	for i, option := range initSizeOptions {
-		marker := "( )"
+		dot := unselectedDot
+		optionStyle := blurredStyle
 		if i == m.sizeIndex {
-			marker = "(x)"
+			dot = selectedDot
+			if focused {
+				optionStyle = focusedStyle
+			} else {
+				optionStyle = lipgloss.NewStyle()
+			}
 		}
-		cursor := "  "
-		if m.focusedItem() == initFocusSize && i == m.sizeIndex {
-			cursor = "> "
-		}
-		b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, marker, option))
+		b.WriteString(fmt.Sprintf("    %s %s\n", dot, optionStyle.Render(option)))
 	}
 	b.WriteString("\n")
 	return b.String()
 }
 
 func (m initModel) renderButtons() string {
-	submit := "[ Submit ]"
-	cancel := "[ Cancel ]"
+	submit := blurredButton
 	if m.focusedItem() == initFocusSubmit {
-		submit = "[*Submit*]"
+		submit = focusedButton
 	}
+
+	cancel := blurredCancelButton
 	if m.focusedItem() == initFocusCancel {
-		cancel = "[*Cancel*]"
+		cancel = focusedCancelButton
 	}
 
 	return fmt.Sprintf("  %s  %s\n", submit, cancel)
@@ -353,8 +402,8 @@ func (m initModel) answersFromState() initAnswers {
 		Region:      strings.TrimSpace(m.regionInput.Value()),
 		SizeChoice:  initSizeOptions[m.sizeIndex],
 		Registry:    strings.TrimSpace(m.registryInput.Value()),
-		AMD64AMI:    strings.TrimSpace(m.amd64AMIInput.Value()),
-		ARM64AMI:    strings.TrimSpace(m.arm64AMIInput.Value()),
+		AMD64AMI:    defaultAMD64AMI,
+		ARM64AMI:    defaultARM64AMI,
 		CustomAMD64: strings.TrimSpace(m.customAMD64Input.Value()),
 		CustomARM64: strings.TrimSpace(m.customARM64Input.Value()),
 	}
@@ -363,12 +412,6 @@ func (m initModel) answersFromState() initAnswers {
 func validateInitAnswers(answers initAnswers) error {
 	if strings.TrimSpace(answers.Region) == "" {
 		return errors.New("AWS region is required")
-	}
-	if strings.TrimSpace(answers.AMD64AMI) == "" {
-		return errors.New("published amd64 AMI ID is required")
-	}
-	if strings.TrimSpace(answers.ARM64AMI) == "" {
-		return errors.New("published arm64 AMI ID is required")
 	}
 	if answers.SizeChoice == initSizeCustom {
 		if strings.TrimSpace(answers.CustomAMD64) == "" {
