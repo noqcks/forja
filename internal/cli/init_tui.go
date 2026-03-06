@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	releaseinfo "github.com/noqcks/forja/internal/release"
 	"github.com/spf13/cobra"
 )
 
@@ -16,12 +17,12 @@ const (
 	initSizeMedium = "Medium (c7a.xlarge / c7g.xlarge)"
 	initSizeLarge  = "Large (c7a.2xlarge / c7g.2xlarge)"
 	initSizeCustom = "Custom"
-
-	defaultAMD64AMI = ""
-	defaultARM64AMI = ""
 )
 
 var (
+	defaultAMD64AMI = releaseinfo.AWSAMI("us-east-1", "amd64")
+	defaultARM64AMI = releaseinfo.AWSAMI("us-east-1", "arm64")
+
 	errInitCanceled = errors.New("init canceled")
 
 	titleStyle = lipgloss.NewStyle().
@@ -438,11 +439,11 @@ func validateInitAnswers(answers initAnswers) error {
 	if strings.TrimSpace(answers.Region) == "" {
 		return errors.New("AWS region is required")
 	}
-	if strings.TrimSpace(answers.AMD64AMI) == "" {
-		return errors.New("published amd64 AMI is required")
+	if strings.TrimSpace(answers.AMD64AMI) == "" && resolvePublishedAMI(answers.Region, "amd64", answers.AMD64AMI) == "" {
+		return fmt.Errorf("published amd64 AMI is required for region %s", strings.TrimSpace(answers.Region))
 	}
-	if strings.TrimSpace(answers.ARM64AMI) == "" {
-		return errors.New("published arm64 AMI is required")
+	if strings.TrimSpace(answers.ARM64AMI) == "" && resolvePublishedAMI(answers.Region, "arm64", answers.ARM64AMI) == "" {
+		return fmt.Errorf("published arm64 AMI is required for region %s", strings.TrimSpace(answers.Region))
 	}
 	if answers.SizeChoice == initSizeCustom {
 		if strings.TrimSpace(answers.CustomAMD64) == "" {

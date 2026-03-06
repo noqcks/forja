@@ -22,11 +22,18 @@ func TestValidateInitAnswers(t *testing.T) {
 	}
 
 	if err := validateInitAnswers(initAnswers{
-		Region:     "us-east-1",
+		Region:     "us-west-2",
 		SizeChoice: initSizeSmall,
 		ARM64AMI:   "ami-0def",
 	}); err == nil {
 		t.Fatal("expected amd64 AMI to be required")
+	}
+
+	if err := validateInitAnswers(initAnswers{
+		Region:     "us-east-1",
+		SizeChoice: initSizeSmall,
+	}); err != nil {
+		t.Fatalf("expected us-east-1 to use built-in AMIs, got %v", err)
 	}
 
 	if err := validateInitAnswers(initAnswers{

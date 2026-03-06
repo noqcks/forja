@@ -9,6 +9,7 @@ import (
 	"github.com/noqcks/forja/internal/cloud"
 	awsprovider "github.com/noqcks/forja/internal/cloud/aws"
 	"github.com/noqcks/forja/internal/config"
+	releaseinfo "github.com/noqcks/forja/internal/release"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -50,6 +51,11 @@ func newInitCmd(root *rootOptions) *cobra.Command {
 func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *initOptions) error {
 	answers, err := collectInitAnswers(cmd, opts)
 	if err != nil {
+		return err
+	}
+	answers.AMD64AMI = resolvePublishedAMI(answers.Region, "amd64", answers.AMD64AMI)
+	answers.ARM64AMI = resolvePublishedAMI(answers.Region, "arm64", answers.ARM64AMI)
+	if err := validateInitAnswers(answers); err != nil {
 		return err
 	}
 
@@ -134,12 +140,17 @@ func collectInitAnswers(cmd *cobra.Command, opts *initOptions) (initAnswers, err
 			CustomAMD64: strings.TrimSpace(opts.customAMD64),
 			CustomARM64: strings.TrimSpace(opts.customARM64),
 		}
-		if err := validateInitAnswers(answers); err != nil {
-			return initAnswers{}, err
-		}
 		return answers, nil
 	}
 	return collectInitAnswersTUI(cmd)
+}
+
+func resolvePublishedAMI(region string, arch string, explicit string) string {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		return explicit
+	}
+	return releaseinfo.AWSAMI(strings.TrimSpace(region), arch)
 }
 
 func shouldUseFlagInit(cmd *cobra.Command, opts *initOptions) bool {

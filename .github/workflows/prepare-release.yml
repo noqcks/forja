@@ -1,0 +1,157 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version tag to create
+        required: true
+        type: string
+      region:
+        description: AWS region to build release AMIs in
+        required: true
+        default: us-east-1
+        type: string
+      buildkit_version:
+        description: BuildKit release to bake into the AMIs
+        required: true
+        default: v0.28.0
+        type: string
+      publish_public:
+        description: Publish the release AMIs publicly
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: prepare-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - run: scripts/validate-packer.sh --architecture both --region "${{ inputs.region }}" --buildkit-version "${{ inputs.buildkit_version }}"
+
+  build-amd64:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - run: >
+          scripts/validate-packer.sh
+          --build
+          --architecture amd64
+          --region "${{ inputs.region }}"
+          --publish-public "${{ inputs.publish_public }}"
+          --buildkit-version "${{ inputs.buildkit_version }}"
+          --commit-sha "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packer-manifest-amd64
+          path: packer/manifest-amd64-${{ inputs.region }}.json
+
+  build-arm64:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+      - run: >
+          scripts/validate-packer.sh
+          --build
+          --architecture arm64
+          --region "${{ inputs.region }}"
+          --publish-public "${{ inputs.publish_public }}"
+          --buildkit-version "${{ inputs.buildkit_version }}"
+          --commit-sha "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packer-manifest-arm64
+          path: packer/manifest-arm64-${{ inputs.region }}.json
+
+  tag-release:
+    needs:
+      - build-amd64
+      - build-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packer-manifest-amd64
+          path: packer
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packer-manifest-arm64
+          path: packer
+      - name: Bake AMI IDs into source
+        run: |
+          set -euo pipefail
+          AMD64_AMI="$(jq -r '.builds[-1].artifact_id' "packer/manifest-amd64-${{ inputs.region }}.json" | cut -d: -f2)"
+          ARM64_AMI="$(jq -r '.builds[-1].artifact_id' "packer/manifest-arm64-${{ inputs.region }}.json" | cut -d: -f2)"
+          scripts/update-release-amis.sh \
+            --region "${{ inputs.region }}" \
+            --amd64-ami "${AMD64_AMI}" \
+            --arm64-ami "${ARM64_AMI}"
+      - name: Commit AMI update and tag release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^v[0-9]+(\.[0-9]+){2}(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "version must look like v1.2.3" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add internal/release/amis.go
+          if ! git diff --cached --quiet; then
+            git commit -m "release: bake AMI ids for ${VERSION}"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+          if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+            echo "tag ${VERSION} already exists" >&2
+            exit 1
+          fi
+          git tag -a "${VERSION}" -m "forja ${VERSION}"
+          git push origin "${VERSION}"
