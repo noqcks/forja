@@ -1,8 +1,17 @@
-# Forja
+# Forja - Fast Remote Docker Builds on Your Own AWS Infrastructure
 
-Self-hosted remote Docker build machine. Like [Depot](https://depot.dev), but runs entirely in your own AWS account with no SaaS dependency.
+Forja is a self-hosted remote Docker build tool that runs entirely in your own AWS account. It's a faster, cheaper alternative to [Depot](https://depot.dev) and other managed Docker build services - with no SaaS dependency.
 
-Forja spins up ephemeral EC2 instances running [BuildKit](https://github.com/moby/buildkit), builds your Docker images remotely over mTLS, and tears down the instance when done. You pay only for compute time and S3 cache storage.
+Forja spins up ephemeral EC2 instances running [BuildKit](https://github.com/moby/buildkit), builds your Docker images remotely over mTLS, and tears down the instance when done. You get native multi-architecture builds (ARM64 and AMD64), persistent S3 build cache, and pay only raw EC2 rates - about 16x cheaper per build minute than managed services.
+
+## Features
+
+- **Remote Docker builds on EC2** - offload builds from your laptop or CI runner to dedicated cloud compute
+- **Native multi-arch builds** - build ARM64 on Graviton and AMD64 on Intel in parallel, no QEMU emulation
+- **Persistent S3 build cache** - cache layers across builds for faster iteration
+- **Per-build mTLS encryption** - fresh certificates generated for every build session
+- **Ephemeral infrastructure** - instances self-destruct after 60 minutes, no idle costs
+- **Drop-in Dockerfile compatible** - supports build args, secrets, targets, and multi-stage builds
 
 ## How It Works
 
@@ -100,18 +109,18 @@ forja build -t myapp:latest --load .
       --profile string       AWS profile to use
 ```
 
-## Multi-Architecture Builds
+## Native Multi-Architecture Docker Builds
 
 When `--platform linux/amd64,linux/arm64` is specified, Forja launches two instances in parallel:
 
-- Graviton (e.g., `c7g.xlarge`) for `linux/arm64`
-- Intel/AMD (e.g., `c7a.xlarge`) for `linux/amd64`
+- **Graviton** (e.g., `c7g.xlarge`) for native `linux/arm64` builds
+- **Intel/AMD** (e.g., `c7a.xlarge`) for native `linux/amd64` builds
 
-Each builds its native architecture. Forja then creates and pushes a multi-arch manifest list combining both images.
+Each builds on its native architecture with no QEMU emulation overhead. Forja then creates and pushes a multi-arch manifest list combining both images. This is significantly faster than cross-compilation or emulated builds in CI.
 
-## Cost
+## Cost Comparison: Forja vs Depot vs GitHub Actions
 
-Forja is ~16x cheaper per build minute than Depot since you pay raw EC2 rates.
+Forja is ~16x cheaper per build minute than Depot and ~4x cheaper than GitHub Actions larger runners, since you pay raw EC2 on-demand rates with no markup.
 
 | Instance Type | vCPU | RAM | Hourly Rate | 5-min build |
 |--------------|------|-----|-------------|-------------|
@@ -139,11 +148,11 @@ All resources are created by `forja init` and removed by `forja destroy`:
 
 The user running `forja` needs permissions for EC2, S3, IAM, and Pricing APIs. See [forja-spec.md](forja-spec.md#54-cli-user-iam-permissions) for the full list.
 
-## Security
+## Security Model
 
 - **No SSH. No persistent servers.** Instances are ephemeral and self-destruct after 60 minutes.
 - **Per-session mTLS certificates.** Every build generates a fresh CA + server/client cert chain. Certs are never reused.
-- **No SaaS dependency.** Everything runs in your AWS account.
+- **No SaaS dependency.** Your source code and build artifacts never leave your AWS account.
 - **Signal handling.** On Ctrl+C or SIGTERM, the CLI terminates all instances launched for the current build.
 - **Self-destruct safety net.** If the CLI is killed hard, instances terminate themselves after 60 minutes via a systemd timer.
 
@@ -162,6 +171,17 @@ cache_bucket: forja-cache-123456789012-us-east-1
 cache_ttl_days: 14
 self_destruct_minutes: 60
 ```
+
+## Why Forja Over Other Docker Build Services?
+
+| | Forja | Depot | GitHub Actions |
+|---|---|---|---|
+| Runs in your AWS account | Yes | No | No |
+| Source code stays private | Yes | Vendor-dependent | Vendor-dependent |
+| Native ARM64 builds | Yes (Graviton) | Yes | Limited |
+| Persistent build cache | S3 (your account) | Managed | Limited |
+| Idle cost | ~$0 | $0+ subscription | Per-minute |
+| Per-minute cost | Raw EC2 rates | ~16x more | ~4x more |
 
 ## License
 
