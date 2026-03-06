@@ -14,8 +14,6 @@ type ProvisionRequest struct {
 	CacheTTLDays        int
 	SelfDestructMinutes int
 	Instances           map[string]string
-	Registry            string
-	PublishedAMI        map[string]string
 }
 
 type ProvisionResult struct {
@@ -28,7 +26,6 @@ type ProvisionResult struct {
 	DefaultVPCID        string
 	DefaultSubnetIDs    []string
 	LaunchTemplates     map[string]string
-	AMI                 map[string]string
 }
 
 type UploadCertificatesRequest struct {

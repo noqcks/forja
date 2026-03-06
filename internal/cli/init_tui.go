@@ -16,9 +16,6 @@ const (
 	initSizeMedium = "Medium (c7a.xlarge / c7g.xlarge)"
 	initSizeLarge  = "Large (c7a.2xlarge / c7g.2xlarge)"
 	initSizeCustom = "Custom"
-
-	defaultAMD64AMI = ""
-	defaultARM64AMI = ""
 )
 
 var (
@@ -74,9 +71,6 @@ var initSizeOptions = []string{
 type initAnswers struct {
 	Region      string
 	SizeChoice  string
-	Registry    string
-	AMD64AMI    string
-	ARM64AMI    string
 	CustomAMD64 string
 	CustomARM64 string
 }
@@ -86,9 +80,6 @@ type initFocus int
 const (
 	initFocusRegion initFocus = iota
 	initFocusSize
-	initFocusRegistry
-	initFocusAMD64AMI
-	initFocusARM64AMI
 	initFocusCustomAMD64
 	initFocusCustomARM64
 	initFocusSubmit
@@ -97,9 +88,6 @@ const (
 
 type initModel struct {
 	regionInput      textinput.Model
-	registryInput    textinput.Model
-	amd64AMIInput    textinput.Model
-	arm64AMIInput    textinput.Model
 	customAMD64Input textinput.Model
 	customARM64Input textinput.Model
 	sizeIndex        int
@@ -109,7 +97,7 @@ type initModel struct {
 	answers          initAnswers
 }
 
-func collectInitAnswers(cmd *cobra.Command) (initAnswers, error) {
+func collectInitAnswersTUI(cmd *cobra.Command) (initAnswers, error) {
 	model := newInitModel()
 	program := tea.NewProgram(
 		model,
@@ -137,9 +125,6 @@ func collectInitAnswers(cmd *cobra.Command) (initAnswers, error) {
 func newInitModel() initModel {
 	model := initModel{
 		regionInput:      newInitTextInput("us-east-1", "us-east-1"),
-		registryInput:    newInitTextInput("", "ghcr.io/org"),
-		amd64AMIInput:    newInitTextInput(defaultAMD64AMI, "ami-0123456789abcdef0"),
-		arm64AMIInput:    newInitTextInput(defaultARM64AMI, "ami-0123456789abcdef0"),
 		customAMD64Input: newInitTextInput("c7a.large", "c7a.large"),
 		customARM64Input: newInitTextInput("c7g.large", "c7g.large"),
 	}
@@ -227,9 +212,6 @@ func (m initModel) View() string {
 
 	b.WriteString(m.renderField(initFocusRegion, "AWS region", m.regionInput.View()))
 	b.WriteString(m.renderSizeChoice())
-	b.WriteString(m.renderField(initFocusRegistry, "Default registry", m.registryInput.View()))
-	b.WriteString(m.renderField(initFocusAMD64AMI, "Published amd64 AMI", m.amd64AMIInput.View()))
-	b.WriteString(m.renderField(initFocusARM64AMI, "Published arm64 AMI", m.arm64AMIInput.View()))
 	if m.usesCustomInstances() {
 		b.WriteString(m.renderField(initFocusCustomAMD64, "Custom amd64 instance", m.customAMD64Input.View()))
 		b.WriteString(m.renderField(initFocusCustomARM64, "Custom arm64 instance", m.customARM64Input.View()))
@@ -257,21 +239,6 @@ func (m *initModel) updateFocusedInput(msg tea.Msg) tea.Cmd {
 		m.regionInput, cmd = m.regionInput.Update(msg)
 		m.errMessage = ""
 		return cmd
-	case initFocusRegistry:
-		var cmd tea.Cmd
-		m.registryInput, cmd = m.registryInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusAMD64AMI:
-		var cmd tea.Cmd
-		m.amd64AMIInput, cmd = m.amd64AMIInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusARM64AMI:
-		var cmd tea.Cmd
-		m.arm64AMIInput, cmd = m.arm64AMIInput.Update(msg)
-		m.errMessage = ""
-		return cmd
 	case initFocusCustomAMD64:
 		var cmd tea.Cmd
 		m.customAMD64Input, cmd = m.customAMD64Input.Update(msg)
@@ -291,9 +258,6 @@ func (m initModel) visibleItems() []initFocus {
 	items := []initFocus{
 		initFocusRegion,
 		initFocusSize,
-		initFocusRegistry,
-		initFocusAMD64AMI,
-		initFocusARM64AMI,
 	}
 	if m.usesCustomInstances() {
 		items = append(items, initFocusCustomAMD64, initFocusCustomARM64)
@@ -329,17 +293,11 @@ func (m *initModel) clampFocus() {
 func (m *initModel) applyFocusStyles() {
 	inputs := []*textinput.Model{
 		&m.regionInput,
-		&m.registryInput,
-		&m.amd64AMIInput,
-		&m.arm64AMIInput,
 		&m.customAMD64Input,
 		&m.customARM64Input,
 	}
 	focusItems := []initFocus{
 		initFocusRegion,
-		initFocusRegistry,
-		initFocusAMD64AMI,
-		initFocusARM64AMI,
 		initFocusCustomAMD64,
 		initFocusCustomARM64,
 	}
@@ -388,6 +346,8 @@ func (m initModel) renderSizeChoice() string {
 	b.WriteString(cursor)
 	b.WriteString(style.Render("Instance size"))
 	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("    EC2 instance type for build workers. Larger = faster builds, higher cost."))
+	b.WriteString("\n")
 
 	for i, option := range initSizeOptions {
 		dot := unselectedDot
@@ -424,9 +384,6 @@ func (m initModel) answersFromState() initAnswers {
 	return initAnswers{
 		Region:      strings.TrimSpace(m.regionInput.Value()),
 		SizeChoice:  initSizeOptions[m.sizeIndex],
-		Registry:    strings.TrimSpace(m.registryInput.Value()),
-		AMD64AMI:    strings.TrimSpace(m.amd64AMIInput.Value()),
-		ARM64AMI:    strings.TrimSpace(m.arm64AMIInput.Value()),
 		CustomAMD64: strings.TrimSpace(m.customAMD64Input.Value()),
 		CustomARM64: strings.TrimSpace(m.customARM64Input.Value()),
 	}
@@ -435,12 +392,6 @@ func (m initModel) answersFromState() initAnswers {
 func validateInitAnswers(answers initAnswers) error {
 	if strings.TrimSpace(answers.Region) == "" {
 		return errors.New("AWS region is required")
-	}
-	if strings.TrimSpace(answers.AMD64AMI) == "" {
-		return errors.New("published amd64 AMI is required")
-	}
-	if strings.TrimSpace(answers.ARM64AMI) == "" {
-		return errors.New("published arm64 AMI is required")
 	}
 	if answers.SizeChoice == initSizeCustom {
 		if strings.TrimSpace(answers.CustomAMD64) == "" {

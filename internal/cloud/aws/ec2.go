@@ -32,10 +32,6 @@ func (p *Provider) EnsureInfrastructure(ctx context.Context, req cloud.Provision
 	if err != nil {
 		return nil, err
 	}
-	lts, err := p.ensureLaunchTemplates(ctx, req.PublishedAMI, req.Instances, sgID)
-	if err != nil {
-		return nil, err
-	}
 	return &cloud.ProvisionResult{
 		SecurityGroupID:     sgID,
 		SecurityGroupName:   sgName,
@@ -45,8 +41,7 @@ func (p *Provider) EnsureInfrastructure(ctx context.Context, req cloud.Provision
 		InstanceProfileARN:  profileARN,
 		DefaultVPCID:        vpcID,
 		DefaultSubnetIDs:    subnetIDs,
-		LaunchTemplates:     lts,
-		AMI:                 req.PublishedAMI,
+		LaunchTemplates:     map[string]string{},
 	}, nil
 }
 
@@ -160,8 +155,11 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 		desc, err := p.ec2.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{
 			LaunchTemplateNames: []string{name},
 		})
-		if err != nil && !strings.Contains(err.Error(), "InvalidLaunchTemplateName.NotFoundException") {
-			return nil, fmt.Errorf("describe launch templates: %w", err)
+		if err != nil {
+			if !strings.Contains(err.Error(), "InvalidLaunchTemplateName.NotFoundException") {
+				return nil, fmt.Errorf("describe launch templates: %w", err)
+			}
+			desc = &ec2.DescribeLaunchTemplatesOutput{}
 		}
 		if len(desc.LaunchTemplates) == 0 {
 			out, createErr := p.ec2.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
@@ -207,13 +205,7 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 		},
 		InstanceType: ec2types.InstanceType(req.InstanceTypeOverride),
 		UserData:     sdkaws.String(encodeUserData(req.UserData)),
-		NetworkInterfaces: []ec2types.InstanceNetworkInterfaceSpecification{
-			{
-				DeviceIndex:              sdkaws.Int32(0),
-				AssociatePublicIpAddress: sdkaws.Bool(true),
-				SubnetId:                 sdkaws.String(req.SubnetID),
-			},
-		},
+		SubnetId:     sdkaws.String(req.SubnetID),
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
