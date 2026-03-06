@@ -28,8 +28,7 @@ install -m 0755 /tmp/bin/buildkit-runc /usr/local/bin/buildkit-runc
 cat >/etc/systemd/system/buildkitd.service <<'EOF'
 [Unit]
 Description=BuildKit daemon
-After=network-online.target
-Wants=network-online.target
+After=network.target
 
 [Service]
 Type=simple

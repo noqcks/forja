@@ -59,16 +59,18 @@ func platformDescriptor(platform string) (v1.Platform, error) {
 	}
 }
 
-func renderUserData(certS3Path string, cacheBucket string, region string, selfDestructMinutes int) string {
+func renderUserData(cacheBucket string, region string, selfDestructMinutes int) string {
 	return fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 
 mkdir -p /etc/buildkit/certs
 mkdir -p /etc/systemd/system/buildkitd.service.d
 
-CERT_S3_PATH=%q
 CACHE_REGION=%q
 SELF_DESTRUCT_MINUTES=%d
+
+TOKEN=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+CERT_S3_PATH=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/tags/instance/%s")
 
 aws s3 cp "${CERT_S3_PATH}/server-cert.pem" /etc/buildkit/certs/server-cert.pem
 aws s3 cp "${CERT_S3_PATH}/server-key.pem" /etc/buildkit/certs/server-key.pem
@@ -124,7 +126,7 @@ EOF
 systemctl daemon-reload
 systemctl enable --now buildkitd.service
 systemctl enable --now forja-self-destruct.timer
-`, certS3Path, region, selfDestructMinutes, region, selfDestructMinutes)
+`, region, selfDestructMinutes, cloud.InstanceTagCertS3Path, region, selfDestructMinutes)
 }
 
 func cacheNameForContext(contextDir string) string {

@@ -89,11 +89,12 @@ func TestPlatformHelpersAndUserData(t *testing.T) {
 		t.Fatal("expected unsupported platform error")
 	}
 
-	userData := renderUserData("s3://bucket/builds/x/certs", "bucket", "us-east-1", 60)
+	userData := renderUserData("bucket", "us-east-1", 60)
 	for _, want := range []string{
-		`CERT_S3_PATH="s3://bucket/builds/x/certs"`,
 		`CACHE_REGION="us-east-1"`,
 		`SELF_DESTRUCT_MINUTES=60`,
+		`latest/meta-data/tags/instance/forja-cert-s3-path`,
+		`aws s3 cp "${CERT_S3_PATH}/server-cert.pem"`,
 		"/etc/systemd/system/buildkitd.service.d/override.conf",
 		"/usr/local/bin/forja-self-destruct.sh",
 		"/etc/systemd/system/forja-self-destruct.timer",

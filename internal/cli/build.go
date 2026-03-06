@@ -125,6 +125,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		price    float64
 	}
 	launchedBuilders := make([]launched, len(platforms))
+	launchStart := time.Now()
 	group, gctx := errgroup.WithContext(ctx)
 	for i, platform := range platforms {
 		i := i
@@ -141,7 +142,8 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				SubnetID:             subnetID,
 				InstanceTypeOverride: opts.instanceType,
 				BuildID:              buildID,
-				UserData:             renderUserData(certS3Path, cfg.CacheBucket, cfg.Region, cfg.SelfDestructMinutes),
+				CertS3Path:           certS3Path,
+				UserData:             renderUserData(cfg.CacheBucket, cfg.Region, cfg.SelfDestructMinutes),
 			})
 			if err != nil {
 				return err
@@ -151,7 +153,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				price = 0
 			}
 			launchedBuilders[i] = launched{platform: platform, arch: arch, instance: instance, price: price}
-			log.Infof("Launching builder (%s, %s)... ready", instance.InstanceType, cfg.Region)
+			log.Infof("Launching builder (%s, %s)... ready in %.1fs", instance.InstanceType, cfg.Region, time.Since(launchStart).Seconds())
 			return nil
 		})
 	}
@@ -207,8 +209,11 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			return err
 		}
 		duration := time.Since(start)
+		launchDuration := start.Sub(launchStart)
 		estimated := cost.Estimate(duration.Seconds(), builder.price)
 		log.Info("Build complete.")
+		log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
+		log.Infof("  Ready:     %.1fs", result.WaitDuration.Seconds())
 		log.Infof("  Duration:  %.1fs", duration.Seconds())
 		log.Infof("  Instance:  %s (%s)", builder.instance.InstanceType, cfg.Region)
 		log.Infof("  Cost:      $%.4f", estimated)
@@ -294,11 +299,13 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	}
 
 	duration := time.Since(start)
+	launchDuration := start.Sub(launchStart)
 	var totalCost float64
 	for _, builder := range launchedBuilders {
 		totalCost += cost.Estimate(duration.Seconds(), builder.price)
 	}
 	log.Info("Build complete.")
+	log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
 	log.Infof("  Duration:  %.1fs", duration.Seconds())
 	log.Infof("  Platforms: %s", strings.Join(platforms, ","))
 	log.Infof("  Cost:      $%.4f", totalCost)

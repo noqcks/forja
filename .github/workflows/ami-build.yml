@@ -50,10 +50,7 @@ jobs:
       - uses: hashicorp/setup-packer@main
         with:
           version: latest
-      - run: packer fmt -check packer
-      - run: packer init packer/forja-builder.pkr.hcl
-      - run: packer validate -var "architecture=amd64" packer/forja-builder.pkr.hcl
-      - run: packer validate -var "architecture=arm64" packer/forja-builder.pkr.hcl
+      - run: scripts/validate-packer.sh --architecture both
 
   build-amd64:
     needs: validate
@@ -74,17 +71,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
           aws-region: ${{ env.PACKER_REGION }}
-      - run: packer init packer/forja-builder.pkr.hcl
       - run: >
-          packer build
-          -var "region=${PACKER_REGION}"
-          -var "architecture=amd64"
-          -var "publish_public=${PACKER_PUBLISH_PUBLIC}"
-          -var "buildkit_version=${PACKER_BUILDKIT_VERSION}"
-          -var "commit_sha=${{ github.sha }}"
-          packer/forja-builder.pkr.hcl
+          scripts/validate-packer.sh
+          --build
+          --architecture amd64
+          --region "${PACKER_REGION}"
+          --publish-public "${PACKER_PUBLISH_PUBLIC}"
+          --buildkit-version "${PACKER_BUILDKIT_VERSION}"
+          --commit-sha "${{ github.sha }}"
       - run: |
-          cp packer/manifest.json "packer/manifest-amd64-${PACKER_REGION}.json"
           jq -r '.builds[-1].artifact_id' "packer/manifest-amd64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
@@ -110,17 +105,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
           aws-region: ${{ env.PACKER_REGION }}
-      - run: packer init packer/forja-builder.pkr.hcl
       - run: >
-          packer build
-          -var "region=${PACKER_REGION}"
-          -var "architecture=arm64"
-          -var "publish_public=${PACKER_PUBLISH_PUBLIC}"
-          -var "buildkit_version=${PACKER_BUILDKIT_VERSION}"
-          -var "commit_sha=${{ github.sha }}"
-          packer/forja-builder.pkr.hcl
+          scripts/validate-packer.sh
+          --build
+          --architecture arm64
+          --region "${PACKER_REGION}"
+          --publish-public "${PACKER_PUBLISH_PUBLIC}"
+          --buildkit-version "${PACKER_BUILDKIT_VERSION}"
+          --commit-sha "${{ github.sha }}"
       - run: |
-          cp packer/manifest.json "packer/manifest-arm64-${PACKER_REGION}.json"
           jq -r '.builds[-1].artifact_id' "packer/manifest-arm64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

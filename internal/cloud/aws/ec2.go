@@ -32,6 +32,10 @@ func (p *Provider) EnsureInfrastructure(ctx context.Context, req cloud.Provision
 	if err != nil {
 		return nil, err
 	}
+	lts, err := p.ensureLaunchTemplates(ctx, req.PublishedAMI, req.Instances, sgID)
+	if err != nil {
+		return nil, err
+	}
 	return &cloud.ProvisionResult{
 		SecurityGroupID:     sgID,
 		SecurityGroupName:   sgName,
@@ -41,7 +45,8 @@ func (p *Provider) EnsureInfrastructure(ctx context.Context, req cloud.Provision
 		InstanceProfileARN:  profileARN,
 		DefaultVPCID:        vpcID,
 		DefaultSubnetIDs:    subnetIDs,
-		LaunchTemplates:     map[string]string{},
+		LaunchTemplates:     lts,
+		AMI:                 req.PublishedAMI,
 	}, nil
 }
 
@@ -137,8 +142,9 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 				Name: sdkaws.String(instanceProfileName),
 			},
 			MetadataOptions: &ec2types.LaunchTemplateInstanceMetadataOptionsRequest{
-				HttpTokens:   ec2types.LaunchTemplateHttpTokensStateRequired,
-				HttpEndpoint: ec2types.LaunchTemplateInstanceMetadataEndpointStateEnabled,
+				HttpTokens:           ec2types.LaunchTemplateHttpTokensStateRequired,
+				HttpEndpoint:         ec2types.LaunchTemplateInstanceMetadataEndpointStateEnabled,
+				InstanceMetadataTags: ec2types.LaunchTemplateInstanceMetadataTagsStateEnabled,
 			},
 			BlockDeviceMappings: []ec2types.LaunchTemplateBlockDeviceMappingRequest{
 				{
@@ -210,8 +216,9 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
 				Tags: append(defaultTags("forja-builder"), []ec2types.Tag{
-					{Key: sdkaws.String("forja:build-id"), Value: sdkaws.String(req.BuildID)},
-					{Key: sdkaws.String("forja:arch"), Value: sdkaws.String(req.Architecture)},
+					{Key: sdkaws.String(cloud.InstanceTagBuildID), Value: sdkaws.String(req.BuildID)},
+					{Key: sdkaws.String(cloud.InstanceTagArch), Value: sdkaws.String(req.Architecture)},
+					{Key: sdkaws.String(cloud.InstanceTagCertS3Path), Value: sdkaws.String(req.CertS3Path)},
 				}...),
 			},
 		},

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	dockerconfig "github.com/docker/cli/cli/config"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -51,6 +52,7 @@ type Request struct {
 
 type Result struct {
 	ExporterResponse map[string]string
+	WaitDuration     time.Duration
 }
 
 func Run(ctx context.Context, req Request) (*Result, error) {
@@ -65,9 +67,11 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	defer client.Close()
 
+	waitStart := time.Now()
 	if err := client.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("wait for buildkit: %w", err)
 	}
+	waitDuration := time.Since(waitStart)
 
 	contextDir, dockerfilePath, err := NormalizeContext(req.ContextDir, req.DockerfilePath)
 	if err != nil {
@@ -202,7 +206,7 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 			return nil, err
 		}
 	}
-	return &Result{ExporterResponse: resp.ExporterResponse}, nil
+	return &Result{ExporterResponse: resp.ExporterResponse, WaitDuration: waitDuration}, nil
 }
 
 func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {

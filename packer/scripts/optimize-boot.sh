@@ -37,8 +37,12 @@ EOF
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
 systemctl mask apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer || true
 
+systemctl disable --now systemd-networkd-wait-online.service || true
+systemctl mask systemd-networkd-wait-online.service || true
+
 systemctl mask systemd-journal-flush.service || true
 systemctl mask multipathd.service multipathd.socket || true
+systemctl mask lvm2-monitor.service lvm2-lvmpolld.service lvm2-lvmpolld.socket || true
 systemctl mask snapd.service snapd.socket snapd.seeded.service snapd.apparmor.service || true
 
 if command -v snap >/dev/null 2>&1; then
@@ -46,6 +50,9 @@ if command -v snap >/dev/null 2>&1; then
 fi
 apt-get purge -y snapd || true
 rm -rf /snap /var/snap /var/lib/snapd /var/cache/snapd
+rm -f /usr/lib/udev/rules.d/66-azure-ephemeral.rules /lib/udev/rules.d/66-azure-ephemeral.rules || true
 
 systemctl disable --now apparmor.service || true
 systemctl mask apparmor.service || true
+
+update-initramfs -u || true
