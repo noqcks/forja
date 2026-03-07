@@ -32,6 +32,13 @@ type buildOptions struct {
 	instanceType string
 }
 
+type launchedBuilder struct {
+	platform string
+	arch     string
+	instance *cloud.BuilderInstance
+	price    float64
+}
+
 func newBuildCmd(root *rootOptions) *cobra.Command {
 	opts := &buildOptions{}
 	cmd := &cobra.Command{
@@ -115,13 +122,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	}
 	defer provider.DeleteCertificates(context.Background(), cfg.CacheBucket, buildID)
 
-	type launched struct {
-		platform string
-		arch     string
-		instance *cloud.BuilderInstance
-		price    float64
-	}
-	launchedBuilders := make([]launched, len(platforms))
+	launchedBuilders := make([]launchedBuilder, len(platforms))
 	launchStart := time.Now()
 	group, gctx := errgroup.WithContext(ctx)
 	for i, platform := range platforms {
@@ -151,7 +152,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			if priceErr != nil {
 				price = 0
 			}
-			launchedBuilders[i] = launched{platform: platform, arch: arch, instance: instance, price: price}
+			launchedBuilders[i] = launchedBuilder{platform: platform, arch: arch, instance: instance, price: price}
 			log.Infof("Launching builder %s (%s, %s, build %s)... ready in %.1fs", instance.Name, instance.InstanceType, cfg.Region, instance.BuildHash, time.Since(launchStart).Seconds())
 			return nil
 		})
@@ -207,9 +208,10 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		if err != nil {
 			return err
 		}
-		duration := time.Since(start)
+		end := time.Now()
+		duration := end.Sub(start)
 		launchDuration := start.Sub(launchStart)
-		estimated := cost.Estimate(duration.Seconds(), builder.price)
+		estimated := estimateBuildCost([]launchedBuilder{builder}, start, end)
 		log.Info("Build complete.")
 		log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
 		log.Infof("  Ready:     %.1fs", result.WaitDuration.Seconds())
@@ -294,12 +296,10 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		}
 	}
 
-	duration := time.Since(start)
+	end := time.Now()
+	duration := end.Sub(start)
 	launchDuration := start.Sub(launchStart)
-	var totalCost float64
-	for _, builder := range launchedBuilders {
-		totalCost += cost.Estimate(duration.Seconds(), builder.price)
-	}
+	totalCost := estimateBuildCost(launchedBuilders, start, end)
 	log.Info("Build complete.")
 	log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
 	log.Infof("  Duration:  %.1fs", duration.Seconds())
@@ -313,6 +313,26 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		log.Infof("  Image:     %s", opts.tags[0])
 	}
 	return nil
+}
+
+func estimateBuildCost(builders []launchedBuilder, buildStart time.Time, buildEnd time.Time) float64 {
+	var total float64
+	for _, builder := range builders {
+		total += cost.Estimate(builderRuntimeSeconds(builder, buildStart, buildEnd), builder.price)
+	}
+	return total
+}
+
+func builderRuntimeSeconds(builder launchedBuilder, buildStart time.Time, buildEnd time.Time) float64 {
+	runtimeStart := buildStart
+	if builder.instance != nil && !builder.instance.LaunchTime.IsZero() && !builder.instance.LaunchTime.After(buildStart) {
+		runtimeStart = builder.instance.LaunchTime
+	}
+	runtime := buildEnd.Sub(runtimeStart).Seconds()
+	if runtime < 0 {
+		return 0
+	}
+	return runtime
 }
 
 func validateBuildOptions(cfg *config.Config, opts *buildOptions, platforms []string) (string, string, error) {

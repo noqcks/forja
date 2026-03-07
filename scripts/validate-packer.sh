@@ -103,6 +103,57 @@ require_cmd() {
   fi
 }
 
+is_true() {
+  case "$1" in
+    true|TRUE|True|1|yes|YES|Yes|on|ON|On)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+check_public_ami_prereqs() {
+  local state
+
+  if ! command -v aws >/dev/null 2>&1; then
+    echo "warning: aws CLI not found; skipping AMI public-share preflight for region ${region}" >&2
+    echo "         if this account blocks public AMI sharing, packer will fail during ModifyImageAttribute" >&2
+    return 0
+  fi
+
+  if ! state="$(aws ec2 get-image-block-public-access-state \
+    --region "${region}" \
+    --query 'ImageBlockPublicAccessState' \
+    --output text 2>/dev/null)"; then
+    echo "warning: unable to read AMI block public access state for region ${region}; continuing" >&2
+    echo "         public AMI builds require ec2:GetImageBlockPublicAccessState or the build may fail late" >&2
+    return 0
+  fi
+
+  if [[ "${state}" == "block-new-sharing" ]]; then
+    cat >&2 <<EOF
+error: this AWS account blocks new public AMI sharing in ${region}
+
+The current build requested --publish-public=true, which makes Packer call
+ModifyImageAttribute with ami_groups=["all"]. AWS rejects that while AMI block
+public access is enabled for the account, so the build would fail after the AMI
+is created.
+
+Choose one:
+  1. Build a private AMI instead:
+     scripts/validate-packer.sh --build --publish-public false ...
+  2. Disable the account-level block before publishing publicly:
+     aws ec2 disable-image-block-public-access --region ${region}
+
+To confirm the current setting manually:
+  aws ec2 get-image-block-public-access-state --region ${region}
+EOF
+    exit 1
+  fi
+}
+
 require_cmd packer
 require_cmd bash
 
@@ -133,6 +184,11 @@ done
 if [[ "${do_build}" != "true" ]]; then
   echo "==> Validation complete"
   exit 0
+fi
+
+if is_true "${publish_public}"; then
+  echo "==> Checking public AMI sharing prerequisites"
+  check_public_ami_prereqs
 fi
 
 echo "==> Running AMI build(s)"
