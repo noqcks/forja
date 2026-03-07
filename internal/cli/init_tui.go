@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	releaseinfo "github.com/noqcks/forja/internal/release"
@@ -13,8 +12,10 @@ import (
 )
 
 var (
-	defaultAMD64AMI = releaseinfo.AWSAMI("us-east-1", "amd64")
-	defaultARM64AMI = releaseinfo.AWSAMI("us-east-1", "arm64")
+	defaultAMD64AMI      = releaseinfo.AWSAMI("us-east-1", "amd64")
+	defaultARM64AMI      = releaseinfo.AWSAMI("us-east-1", "arm64")
+	defaultAMD64Instance = "c7a.8xlarge"
+	defaultARM64Instance = "c7g.8xlarge"
 
 	errInitCanceled = errors.New("init canceled")
 
@@ -37,9 +38,6 @@ var (
 	focusedLabelStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("205"))
-
-	cursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("205"))
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196")).
@@ -71,26 +69,17 @@ type initFocus int
 
 const (
 	initFocusRegion initFocus = iota
-	initFocusRegistry
-	initFocusAMD64AMI
-	initFocusARM64AMI
-	initFocusCustomAMD64
-	initFocusCustomARM64
 	initFocusSubmit
 	initFocusCancel
 )
 
 type initModel struct {
-	regionInput      textinput.Model
-	registryInput    textinput.Model
-	amd64AMIInput    textinput.Model
-	arm64AMIInput    textinput.Model
-	customAMD64Input textinput.Model
-	customARM64Input textinput.Model
-	focusIndex       int
-	errMessage       string
-	cancelled        bool
-	answers          initAnswers
+	regions     []string
+	regionIndex int
+	focusIndex  int
+	errMessage  string
+	cancelled   bool
+	answers     initAnswers
 }
 
 func collectInitAnswersTUI(cmd *cobra.Command) (initAnswers, error) {
@@ -119,33 +108,14 @@ func collectInitAnswersTUI(cmd *cobra.Command) (initAnswers, error) {
 }
 
 func newInitModel() initModel {
-	model := initModel{
-		regionInput:      newInitTextInput("us-east-1", "us-east-1"),
-		registryInput:    newInitTextInput("", "ghcr.io/org"),
-		amd64AMIInput:    newInitTextInput(defaultAMD64AMI, "ami-0123456789abcdef0"),
-		arm64AMIInput:    newInitTextInput(defaultARM64AMI, "ami-0123456789abcdef0"),
-		customAMD64Input: newInitTextInput("c7a.8xlarge", "c7a.8xlarge"),
-		customARM64Input: newInitTextInput("c7g.8xlarge", "c7g.8xlarge"),
+	regions := releaseinfo.AWSRegions()
+	return initModel{
+		regions: regions,
 	}
-	model.applyFocusStyles()
-	return model
-}
-
-func newInitTextInput(defaultValue, placeholder string) textinput.Model {
-	input := textinput.New()
-	input.Prompt = "  "
-	input.CharLimit = 512
-	input.Width = 40
-	input.Placeholder = placeholder
-	input.Cursor.Style = cursorStyle
-	if defaultValue != "" {
-		input.SetValue(defaultValue)
-	}
-	return input
 }
 
 func (m initModel) Init() tea.Cmd {
-	return textinput.Blink
+	return nil
 }
 
 func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -160,6 +130,18 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "tab", "down":
 			m.moveFocus(1)
+			return m, nil
+		case "left":
+			if m.focusedItem() == initFocusRegion && m.regionIndex > 0 {
+				m.regionIndex--
+				m.errMessage = ""
+			}
+			return m, nil
+		case "right":
+			if m.focusedItem() == initFocusRegion && m.regionIndex < len(m.regions)-1 {
+				m.regionIndex++
+				m.errMessage = ""
+			}
 			return m, nil
 		case "enter":
 			switch m.focusedItem() {
@@ -181,8 +163,7 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	cmd := m.updateFocusedInput(msg)
-	return m, cmd
+	return m, nil
 }
 
 func (m initModel) View() string {
@@ -190,15 +171,18 @@ func (m initModel) View() string {
 
 	b.WriteString(titleStyle.Render("Forja Init"))
 	b.WriteString("\n\n")
-	b.WriteString(subtitleStyle.Render("Configure the AWS resources that forja should provision."))
+	b.WriteString(subtitleStyle.Render("The following AWS resources will be created:"))
+	b.WriteString("\n\n")
+	b.WriteString(subtitleStyle.Render("  • S3 bucket (forja-cache-<account>-<region>)"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  • IAM role & instance profile (forja-builder)"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  • EC2 security group (forja-builder)"))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render("  • EC2 launch templates (forja-builder-amd64, forja-builder-arm64)"))
 	b.WriteString("\n\n")
 
-	b.WriteString(m.renderField(initFocusRegion, "AWS region", m.regionInput.View()))
-	b.WriteString(m.renderField(initFocusRegistry, "Default registry", m.registryInput.View()))
-	b.WriteString(m.renderField(initFocusAMD64AMI, "Published amd64 AMI", m.amd64AMIInput.View()))
-	b.WriteString(m.renderField(initFocusARM64AMI, "Published arm64 AMI", m.arm64AMIInput.View()))
-	b.WriteString(m.renderField(initFocusCustomAMD64, "amd64 instance", m.customAMD64Input.View()))
-	b.WriteString(m.renderField(initFocusCustomARM64, "arm64 instance", m.customARM64Input.View()))
+	b.WriteString(m.renderRegionSelector())
 
 	b.WriteString("\n")
 	b.WriteString(m.renderButtons())
@@ -209,58 +193,39 @@ func (m initModel) View() string {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("  ↑/↓ navigate • enter confirm • esc cancel"))
+	b.WriteString(helpStyle.Render("  ↑/↓ navigate • ←/→ change region • enter confirm • esc cancel"))
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-func (m *initModel) updateFocusedInput(msg tea.Msg) tea.Cmd {
-	switch m.focusedItem() {
-	case initFocusRegion:
-		var cmd tea.Cmd
-		m.regionInput, cmd = m.regionInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusRegistry:
-		var cmd tea.Cmd
-		m.registryInput, cmd = m.registryInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusAMD64AMI:
-		var cmd tea.Cmd
-		m.amd64AMIInput, cmd = m.amd64AMIInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusARM64AMI:
-		var cmd tea.Cmd
-		m.arm64AMIInput, cmd = m.arm64AMIInput.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusCustomAMD64:
-		var cmd tea.Cmd
-		m.customAMD64Input, cmd = m.customAMD64Input.Update(msg)
-		m.errMessage = ""
-		return cmd
-	case initFocusCustomARM64:
-		var cmd tea.Cmd
-		m.customARM64Input, cmd = m.customARM64Input.Update(msg)
-		m.errMessage = ""
-		return cmd
-	default:
-		return nil
+func (m initModel) renderRegionSelector() string {
+	focused := m.focusedItem() == initFocusRegion
+
+	cursor := "  "
+	style := labelStyle
+	if focused {
+		cursor = focusedStyle.Render("> ")
+		style = focusedLabelStyle
 	}
+
+	var dots strings.Builder
+	for i, r := range m.regions {
+		if i == m.regionIndex {
+			dots.WriteString(selectedDot + " " + style.Render(r))
+		} else {
+			dots.WriteString(unselectedDot + " " + blurredStyle.Render(r))
+		}
+		if i < len(m.regions)-1 {
+			dots.WriteString("  ")
+		}
+	}
+
+	return fmt.Sprintf("%s%s\n  %s\n\n", cursor, style.Render("AWS region"), dots.String())
 }
 
 func (m initModel) visibleItems() []initFocus {
-	items := []initFocus{
-		initFocusRegion,
-		initFocusRegistry,
-		initFocusAMD64AMI,
-		initFocusARM64AMI,
-		initFocusCustomAMD64,
-		initFocusCustomARM64,
-	}
+	items := []initFocus{initFocusRegion}
 	return append(items, initFocusSubmit, initFocusCancel)
 }
 
@@ -276,61 +241,6 @@ func (m *initModel) moveFocus(delta int) {
 	items := m.visibleItems()
 	m.focusIndex = (m.focusIndex + delta + len(items)) % len(items)
 	m.errMessage = ""
-	m.applyFocusStyles()
-}
-
-func (m *initModel) clampFocus() {
-	items := m.visibleItems()
-	if m.focusIndex >= len(items) {
-		m.focusIndex = len(items) - 1
-	}
-	if m.focusIndex < 0 {
-		m.focusIndex = 0
-	}
-}
-
-func (m *initModel) applyFocusStyles() {
-	inputs := []*textinput.Model{
-		&m.regionInput,
-		&m.registryInput,
-		&m.amd64AMIInput,
-		&m.arm64AMIInput,
-		&m.customAMD64Input,
-		&m.customARM64Input,
-	}
-	focusItems := []initFocus{
-		initFocusRegion,
-		initFocusRegistry,
-		initFocusAMD64AMI,
-		initFocusARM64AMI,
-		initFocusCustomAMD64,
-		initFocusCustomARM64,
-	}
-
-	for i, input := range inputs {
-		if m.focusedItem() == focusItems[i] {
-			input.Focus()
-			input.PromptStyle = focusedStyle
-			input.TextStyle = focusedStyle
-		} else {
-			input.Blur()
-			input.PromptStyle = lipgloss.NewStyle()
-			input.TextStyle = lipgloss.NewStyle()
-		}
-	}
-}
-
-func (m initModel) renderField(focus initFocus, label string, inputView string) string {
-	focused := m.focusedItem() == focus
-
-	cursor := "  "
-	style := labelStyle
-	if focused {
-		cursor = focusedStyle.Render("> ")
-		style = focusedLabelStyle
-	}
-
-	return fmt.Sprintf("%s%s\n%s\n\n", cursor, style.Render(label), inputView)
 }
 
 func (m initModel) renderButtons() string {
@@ -348,25 +258,27 @@ func (m initModel) renderButtons() string {
 }
 
 func (m initModel) answersFromState() initAnswers {
+	region := m.regions[m.regionIndex]
 	return initAnswers{
-		Region:      strings.TrimSpace(m.regionInput.Value()),
-		Registry:    strings.TrimSpace(m.registryInput.Value()),
-		AMD64AMI:    strings.TrimSpace(m.amd64AMIInput.Value()),
-		ARM64AMI:    strings.TrimSpace(m.arm64AMIInput.Value()),
-		CustomAMD64: strings.TrimSpace(m.customAMD64Input.Value()),
-		CustomARM64: strings.TrimSpace(m.customARM64Input.Value()),
+		Region:      region,
+		Registry:    "",
+		AMD64AMI:    resolvePublishedAMI(region, "amd64", ""),
+		ARM64AMI:    resolvePublishedAMI(region, "arm64", ""),
+		CustomAMD64: defaultAMD64Instance,
+		CustomARM64: defaultARM64Instance,
 	}
 }
 
 func validateInitAnswers(answers initAnswers) error {
+	region := strings.TrimSpace(answers.Region)
 	if strings.TrimSpace(answers.Region) == "" {
 		return errors.New("AWS region is required")
 	}
-	if strings.TrimSpace(answers.AMD64AMI) == "" && resolvePublishedAMI(answers.Region, "amd64", answers.AMD64AMI) == "" {
-		return fmt.Errorf("published amd64 AMI is required for region %s", strings.TrimSpace(answers.Region))
+	if strings.TrimSpace(answers.AMD64AMI) == "" && resolvePublishedAMI(region, "amd64", answers.AMD64AMI) == "" {
+		return fmt.Errorf("no published amd64 AMI for region %s; rerun with --amd64-ami", region)
 	}
-	if strings.TrimSpace(answers.ARM64AMI) == "" && resolvePublishedAMI(answers.Region, "arm64", answers.ARM64AMI) == "" {
-		return fmt.Errorf("published arm64 AMI is required for region %s", strings.TrimSpace(answers.Region))
+	if strings.TrimSpace(answers.ARM64AMI) == "" && resolvePublishedAMI(region, "arm64", answers.ARM64AMI) == "" {
+		return fmt.Errorf("no published arm64 AMI for region %s; rerun with --arm64-ami", region)
 	}
 	if strings.TrimSpace(answers.CustomAMD64) == "" {
 		return errors.New("amd64 instance type is required")

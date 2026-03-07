@@ -42,8 +42,8 @@ func newInitCmd(root *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.registry, "registry", "", "Default registry prefix")
 	cmd.Flags().StringVar(&opts.amd64AMI, "amd64-ami", defaultAMD64AMI, "Published amd64 AMI ID")
 	cmd.Flags().StringVar(&opts.arm64AMI, "arm64-ami", defaultARM64AMI, "Published arm64 AMI ID")
-	cmd.Flags().StringVar(&opts.customAMD64, "amd64-instance", "c7a.8xlarge", "Default amd64 builder instance type")
-	cmd.Flags().StringVar(&opts.customARM64, "arm64-instance", "c7g.8xlarge", "Default arm64 builder instance type")
+	cmd.Flags().StringVar(&opts.customAMD64, "amd64-instance", defaultAMD64Instance, "Default amd64 builder instance type")
+	cmd.Flags().StringVar(&opts.customARM64, "arm64-instance", defaultARM64Instance, "Default arm64 builder instance type")
 	return cmd
 }
 
