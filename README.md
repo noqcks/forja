@@ -46,9 +46,6 @@ forja init
 
 # 2. Build and push an image
 forja build -t 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:latest --push .
-
-# 3. When you're done, tear everything down
-forja destroy
 ```
 
 ## Commands
