@@ -1,9 +1,16 @@
 package cloud
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"time"
+)
 
 const (
 	InstanceTagBuildID    = "forja:build-id"
+	InstanceTagBuildHash  = "forja:build-hash"
 	InstanceTagArch       = "forja:arch"
 	InstanceTagCertS3Path = "forja-cert-s3-path"
 )
@@ -61,6 +68,9 @@ type BuilderInstance struct {
 	PublicIP     string
 	InstanceType string
 	Architecture string
+	Name         string
+	BuildID      string
+	BuildHash    string
 	Region       string
 	LaunchTime   time.Time
 }
@@ -69,6 +79,9 @@ type OrphanedInstance struct {
 	ID           string
 	InstanceType string
 	State        string
+	Name         string
+	BuildID      string
+	BuildHash    string
 	LaunchTime   time.Time
 }
 
@@ -83,4 +96,25 @@ type DestroyRequest struct {
 
 type DestroyResult struct {
 	TerminatedInstances int
+}
+
+func BuildSessionHash(buildID string) string {
+	buildID = strings.TrimSpace(buildID)
+	if buildID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(buildID))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func BuilderInstanceName(buildID string, arch string) string {
+	hash := BuildSessionHash(buildID)
+	if hash == "" {
+		return "forja-builder"
+	}
+	arch = strings.TrimSpace(strings.TrimPrefix(arch, "linux/"))
+	if arch == "" {
+		return fmt.Sprintf("forja-build-%s", hash)
+	}
+	return fmt.Sprintf("forja-build-%s-%s", hash, arch)
 }

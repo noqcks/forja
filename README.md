@@ -33,13 +33,10 @@ Forja spins up ephemeral EC2 instances running [BuildKit](https://github.com/mob
 ## Installation
 
 ```bash
-# Install script (Linux + macOS)
-curl -sfL https://get.forja.dev | sh
-
-# Or download from GitHub Releases
+curl -sfL https://raw.githubusercontent.com/noqcks/forja/main/install.sh | sh
 ```
 
-Binaries are available for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, and `linux/arm64`.
+Or download a binary directly from [GitHub Releases](https://github.com/noqcks/forja/releases).
 
 ## Quick Start
 

@@ -61,11 +61,8 @@ func newBuildCmd(root *rootOptions) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *buildOptions, contextDir string) error {
-	cfg, err := config.Load()
+	cfg, err := loadCommandConfig(true)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	if err := config.Validate(cfg); err != nil {
 		return err
 	}
 	if opts.push {
@@ -75,19 +72,23 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		return fmt.Errorf("at least one --tag is required with --push or --load")
 	}
 	platforms := platformList(opts.platforms, cfg.DefaultPlatform)
-	if len(platforms) > 1 && opts.load {
-		return fmt.Errorf("--load is only supported for single-platform builds")
-	}
-	if len(platforms) > 1 && opts.instanceType != "" {
-		return fmt.Errorf("--instance-type override is only supported for single-platform builds")
+	repo, subnetID, err := validateBuildOptions(cfg, opts, platforms)
+	if err != nil {
+		return err
 	}
 
 	provider, err := providerFromConfig(ctx, cfg, root.profile)
 	if err != nil {
 		return err
 	}
+	if _, err := provider.Identity(ctx); err != nil {
+		return formatAWSIdentityError(err, root.profile)
+	}
 
 	buildID := "bld_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	buildHash := cloud.BuildSessionHash(buildID)
+	log.Infof("Build session: %s", buildID)
+	log.Infof("EC2 instance name prefix: %s", cloud.BuilderInstanceName(buildID, ""))
 	bundle, err := certs.Generate()
 	if err != nil {
 		return err
@@ -106,17 +107,9 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		ServerKey:  bundle.ServerKeyPEM,
 	})
 	if err != nil {
-		return err
+		return formatS3BucketAccessError(err, cfg.CacheBucket)
 	}
 	defer provider.DeleteCertificates(context.Background(), cfg.CacheBucket, buildID)
-
-	subnetID := ""
-	if len(cfg.Resources.DefaultSubnetIDs) > 0 {
-		subnetID = cfg.Resources.DefaultSubnetIDs[0]
-	}
-	if subnetID == "" {
-		return fmt.Errorf("no default subnet is configured; re-run forja init")
-	}
 
 	type launched struct {
 		platform string
@@ -153,7 +146,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				price = 0
 			}
 			launchedBuilders[i] = launched{platform: platform, arch: arch, instance: instance, price: price}
-			log.Infof("Launching builder (%s, %s)... ready in %.1fs", instance.InstanceType, cfg.Region, time.Since(launchStart).Seconds())
+			log.Infof("Launching builder %s (%s, %s, build %s)... ready in %.1fs", instance.Name, instance.InstanceType, cfg.Region, buildHash, time.Since(launchStart).Seconds())
 			return nil
 		})
 	}
@@ -228,10 +221,6 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 
 	if opts.push && len(opts.tags) == 0 {
 		return fmt.Errorf("multi-arch push requires at least one tag")
-	}
-	repo, err := ensureSameRepository(opts.tags)
-	if err != nil {
-		return err
 	}
 
 	manifestSources := make([]buildkit.ManifestSource, len(platforms))
@@ -313,4 +302,40 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		log.Infof("  Image:     %s", opts.tags[0])
 	}
 	return nil
+}
+
+func validateBuildOptions(cfg *config.Config, opts *buildOptions, platforms []string) (string, string, error) {
+	if len(platforms) == 0 {
+		return "", "", fmt.Errorf("at least one target platform is required")
+	}
+	for _, platform := range platforms {
+		arch, err := platformArch(platform)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(cfg.Resources.LaunchTemplates[arch]) == "" {
+			return "", "", fmt.Errorf("launch template for %s is not configured; run `forja init` again", arch)
+		}
+	}
+	if len(platforms) > 1 && opts.load {
+		return "", "", fmt.Errorf("--load is only supported for single-platform builds")
+	}
+	if len(platforms) > 1 && opts.instanceType != "" {
+		return "", "", fmt.Errorf("--instance-type override is only supported for single-platform builds")
+	}
+
+	subnetID := configuredSubnetID(cfg)
+	if subnetID == "" {
+		return "", "", fmt.Errorf("no default subnet is configured; run `forja init` again")
+	}
+
+	repo := ""
+	if len(platforms) > 1 && opts.push {
+		var err error
+		repo, err = ensureSameRepository(opts.tags)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return repo, subnetID, nil
 }

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/noqcks/forja/internal/cloud"
 	"github.com/noqcks/forja/internal/config"
@@ -15,7 +14,7 @@ func newDestroyCmd(root *rootOptions) *cobra.Command {
 		Use:   "destroy",
 		Short: "Tear down all AWS resources created by forja init",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := loadCommandConfig(false)
 			if err != nil {
 				return err
 			}
@@ -27,12 +26,14 @@ func newDestroyCmd(root *rootOptions) *cobra.Command {
 			confirm, err := confirmTypedValue(cmd, `Type "destroy" to confirm:`, "destroy")
 			if err != nil {
 				if errors.Is(err, errPromptCanceled) {
-					return fmt.Errorf("destroy cancelled")
+					log.Info("Destroy cancelled.")
+					return nil
 				}
 				return err
 			}
 			if confirm != "destroy" {
-				return fmt.Errorf("destroy cancelled")
+				log.Info("Destroy cancelled.")
+				return nil
 			}
 			provider, err := providerFromConfig(cmd.Context(), cfg, root.profile)
 			if err != nil {

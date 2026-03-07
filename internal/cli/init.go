@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -51,6 +52,10 @@ func newInitCmd(root *rootOptions) *cobra.Command {
 func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *initOptions) error {
 	answers, err := collectInitAnswers(cmd, opts)
 	if err != nil {
+		if errors.Is(err, errInitCanceled) {
+			log.Info("Init cancelled.")
+			return nil
+		}
 		return err
 	}
 	answers.AMD64AMI = resolvePublishedAMI(answers.Region, "amd64", answers.AMD64AMI)
@@ -70,7 +75,7 @@ func runInit(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *i
 	}
 	identity, err := provider.Identity(ctx)
 	if err != nil {
-		return err
+		return formatAWSIdentityError(err, root.profile)
 	}
 
 	cacheBucket := fmt.Sprintf("forja-cache-%s-%s", identity.AccountID, answers.Region)

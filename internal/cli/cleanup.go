@@ -2,9 +2,10 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
-	"github.com/noqcks/forja/internal/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,7 @@ func newCleanupCmd(root *rootOptions) *cobra.Command {
 		Use:   "cleanup",
 		Short: "Find and terminate orphaned Forja instances",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := loadCommandConfig(false)
 			if err != nil {
 				return err
 			}
@@ -34,7 +35,19 @@ func newCleanupCmd(root *rootOptions) *cobra.Command {
 			ids := make([]string, 0, len(instances))
 			for _, instance := range instances {
 				ids = append(ids, instance.ID)
-				log.Infof("  %s  %s  %s  launched %s ago", instance.ID, instance.InstanceType, instance.State, time.Since(instance.LaunchTime).Round(time.Minute))
+				details := []string{
+					instance.ID,
+					instance.InstanceType,
+					instance.State,
+					fmt.Sprintf("launched %s ago", time.Since(instance.LaunchTime).Round(time.Minute)),
+				}
+				if instance.BuildHash != "" {
+					details = append(details, "build "+instance.BuildHash)
+				}
+				if instance.Name != "" {
+					details = append(details, "name "+instance.Name)
+				}
+				log.Infof("  %s", strings.Join(details, "  "))
 			}
 			confirm, err := confirmAction(cmd, "Terminate orphaned instances?", false)
 			if err != nil {

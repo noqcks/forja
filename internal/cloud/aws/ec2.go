@@ -202,6 +202,8 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 }
 
 func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderRequest) (*cloud.BuilderInstance, error) {
+	instanceName := cloud.BuilderInstanceName(req.BuildID, req.Architecture)
+	buildHash := cloud.BuildSessionHash(req.BuildID)
 	out, err := p.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		MinCount: sdkaws.Int32(1),
 		MaxCount: sdkaws.Int32(1),
@@ -215,8 +217,9 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
-				Tags: append(defaultTags("forja-builder"), []ec2types.Tag{
+				Tags: append(defaultTags(instanceName), []ec2types.Tag{
 					{Key: sdkaws.String(cloud.InstanceTagBuildID), Value: sdkaws.String(req.BuildID)},
+					{Key: sdkaws.String(cloud.InstanceTagBuildHash), Value: sdkaws.String(buildHash)},
 					{Key: sdkaws.String(cloud.InstanceTagArch), Value: sdkaws.String(req.Architecture)},
 					{Key: sdkaws.String(cloud.InstanceTagCertS3Path), Value: sdkaws.String(req.CertS3Path)},
 				}...),
@@ -247,6 +250,9 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 						PublicIP:     sdkaws.ToString(instance.PublicIpAddress),
 						InstanceType: instanceType,
 						Architecture: req.Architecture,
+						Name:         tagValue(instance.Tags, "Name"),
+						BuildID:      tagValue(instance.Tags, cloud.InstanceTagBuildID),
+						BuildHash:    tagValue(instance.Tags, cloud.InstanceTagBuildHash),
 						Region:       p.region,
 						LaunchTime:   sdkaws.ToTime(instance.LaunchTime),
 					}, nil
@@ -295,6 +301,9 @@ func (p *Provider) ListOrphanedInstances(ctx context.Context, region string) ([]
 				ID:           sdkaws.ToString(instance.InstanceId),
 				InstanceType: string(instance.InstanceType),
 				State:        string(instance.State.Name),
+				Name:         tagValue(instance.Tags, "Name"),
+				BuildID:      tagValue(instance.Tags, cloud.InstanceTagBuildID),
+				BuildHash:    tagValue(instance.Tags, cloud.InstanceTagBuildHash),
 				LaunchTime:   sdkaws.ToTime(instance.LaunchTime),
 			})
 		}
@@ -365,4 +374,13 @@ func defaultTags(name string) []ec2types.Tag {
 		{Key: sdkaws.String("Name"), Value: sdkaws.String(name)},
 		{Key: sdkaws.String("forja:managed"), Value: sdkaws.String("true")},
 	}
+}
+
+func tagValue(tags []ec2types.Tag, key string) string {
+	for _, tag := range tags {
+		if sdkaws.ToString(tag.Key) == key {
+			return sdkaws.ToString(tag.Value)
+		}
+	}
+	return ""
 }

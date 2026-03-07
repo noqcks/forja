@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,6 +14,73 @@ import (
 	awsprovider "github.com/noqcks/forja/internal/cloud/aws"
 	"github.com/noqcks/forja/internal/config"
 )
+
+func loadCommandConfig(validate bool) (*config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, formatConfigLoadError(err)
+	}
+	if validate {
+		if err := config.Validate(cfg); err != nil {
+			path, _ := config.ConfigPath()
+			return nil, fmt.Errorf("invalid forja config at %s: %w; run `forja init` to repair it", path, err)
+		}
+	}
+	return cfg, nil
+}
+
+func formatConfigLoadError(err error) error {
+	path, _ := config.ConfigPath()
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("forja is not initialized; run `forja init` first (expected config at %s)", path)
+	}
+	if strings.Contains(err.Error(), "parse config:") {
+		return fmt.Errorf("invalid forja config at %s: %w", path, err)
+	}
+	return fmt.Errorf("load config %s: %w", path, err)
+}
+
+func formatAWSIdentityError(err error, profile string) error {
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(err.Error())
+	profileHint := "configure AWS credentials or pass --profile"
+	if strings.TrimSpace(profile) != "" {
+		profileHint = fmt.Sprintf("configure the AWS profile %q or choose a different --profile", profile)
+	}
+
+	switch {
+	case strings.Contains(message, "failed to refresh cached credentials"),
+		strings.Contains(message, "no ec2 imds role found"),
+		strings.Contains(message, "no valid credential sources"),
+		strings.Contains(message, "failed to find credentials"),
+		strings.Contains(message, "missing credentials"):
+		return fmt.Errorf("no AWS credentials available; %s", profileHint)
+	case strings.Contains(message, "accessdenied"),
+		strings.Contains(message, "unauthorizedoperation"),
+		strings.Contains(message, "not authorized"):
+		return fmt.Errorf("AWS credentials are valid but do not have the required permissions: %w", err)
+	default:
+		return fmt.Errorf("check AWS credentials: %w", err)
+	}
+}
+
+func formatS3BucketAccessError(err error, bucket string) error {
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "accessdenied"),
+		strings.Contains(message, "forbidden"),
+		strings.Contains(message, "not authorized"),
+		strings.Contains(message, "all access to this object has been disabled"):
+		return fmt.Errorf("cannot write build session data to S3 bucket %q; check that this AWS identity can read and write the forja cache bucket, or run `forja init` again if the config points at the wrong bucket", bucket)
+	default:
+		return fmt.Errorf("prepare build session data in S3 bucket %q: %w", bucket, err)
+	}
+}
 
 func providerFromConfig(ctx context.Context, cfg *config.Config, profile string) (cloud.Provider, error) {
 	switch cfg.Provider {
@@ -35,6 +104,13 @@ func platformList(flagValue string, defaultPlatform string) []string {
 		}
 	}
 	return out
+}
+
+func configuredSubnetID(cfg *config.Config) string {
+	if cfg == nil || len(cfg.Resources.DefaultSubnetIDs) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Resources.DefaultSubnetIDs[0])
 }
 
 func platformArch(platform string) (string, error) {
