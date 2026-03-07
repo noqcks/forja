@@ -61,6 +61,12 @@ variable "publish_public" {
   default     = false
 }
 
+variable "copy_regions" {
+  type        = list(string)
+  description = "Additional regions to copy the AMI to after building."
+  default     = []
+}
+
 variable "ssh_username" {
   type        = string
   description = "SSH username for the source image."
@@ -123,6 +129,7 @@ source "amazon-ebs" "forja_builder" {
   ami_name        = local.ami_name
   ami_description = "Forja remote BuildKit builder (${var.architecture})"
   ami_groups      = var.publish_public ? ["all"] : []
+  ami_regions     = var.copy_regions
 
   tags = {
     Name              = local.ami_name

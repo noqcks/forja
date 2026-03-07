@@ -11,7 +11,7 @@ func TestAWSAMI(t *testing.T) {
 	if got := AWSAMI("us-east-1", "arm64"); got == "" {
 		t.Fatal("expected arm64 AMI for us-east-1")
 	}
-	if got := AWSAMI("us-west-2", "amd64"); got != "" {
+	if got := AWSAMI("xx-nowhere-1", "amd64"); got != "" {
 		t.Fatalf("expected empty AMI for unknown region, got %q", got)
 	}
 }

@@ -10,24 +10,10 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      region:
-        description: AWS region to build in
-        required: true
-        default: us-east-1
-        type: string
-      architecture:
-        description: Target architecture
-        required: true
-        default: both
-        type: choice
-        options:
-          - both
-          - amd64
-          - arm64
       publish_public:
-        description: Publish the AMI publicly
+        description: Publish the AMIs publicly
         required: true
-        default: false
+        default: true
         type: boolean
       buildkit_version:
         description: BuildKit release to bake into the AMI
@@ -35,8 +21,14 @@ on:
         default: v0.28.0
         type: string
 
+env:
+  BUILD_REGION: us-east-1
+  COPY_REGIONS: us-west-2,eu-west-1,eu-central-1,ap-southeast-1
+  BUILDKIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.buildkit_version || 'v0.28.0' }}
+  PUBLISH_PUBLIC: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_public || github.event_name == 'push' && 'true' || 'false' }}
+
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -51,14 +43,8 @@ jobs:
 
   build-amd64:
     needs: validate
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && (inputs.architecture == 'both' || inputs.architecture == 'amd64'))
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    env:
-      PACKER_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || 'us-east-1' }}
-      PACKER_BUILDKIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.buildkit_version || 'v0.28.0' }}
-      PACKER_PUBLISH_PUBLIC: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_public || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-packer@main
@@ -67,32 +53,29 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
-          aws-region: ${{ env.PACKER_REGION }}
-      - run: >
-          scripts/validate-packer.sh
-          --build
-          --architecture amd64
-          --region "${PACKER_REGION}"
-          --publish-public "${PACKER_PUBLISH_PUBLIC}"
-          --buildkit-version "${PACKER_BUILDKIT_VERSION}"
-          --commit-sha "${{ github.sha }}"
-      - run: |
-          jq -r '.builds[-1].artifact_id' "packer/manifest-amd64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
+          aws-region: ${{ env.BUILD_REGION }}
+      - name: Build amd64 AMI and copy to all regions
+        run: |
+          packer init packer/forja-builder.pkr.hcl
+          packer build \
+            -var "region=${BUILD_REGION}" \
+            -var "architecture=amd64" \
+            -var "publish_public=${PUBLISH_PUBLIC}" \
+            -var "buildkit_version=${BUILDKIT_VERSION}" \
+            -var "commit_sha=${{ github.sha }}" \
+            -var "copy_regions=[$(echo "${COPY_REGIONS}" | sed 's/\([^,]*\)/"\1"/g')]" \
+            packer/forja-builder.pkr.hcl
+      - name: Rename manifest
+        run: cp packer/manifest.json packer/manifest-amd64.json
       - uses: actions/upload-artifact@v4
         with:
           name: packer-manifest-amd64
-          path: packer/manifest-amd64-*.json
+          path: packer/manifest-amd64.json
 
   build-arm64:
     needs: validate
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && (inputs.architecture == 'both' || inputs.architecture == 'arm64'))
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    env:
-      PACKER_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || 'us-east-1' }}
-      PACKER_BUILDKIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.buildkit_version || 'v0.28.0' }}
-      PACKER_PUBLISH_PUBLIC: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_public || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-packer@main
@@ -101,18 +84,76 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_PACKER_ROLE_ARN }}
-          aws-region: ${{ env.PACKER_REGION }}
-      - run: >
-          scripts/validate-packer.sh
-          --build
-          --architecture arm64
-          --region "${PACKER_REGION}"
-          --publish-public "${PACKER_PUBLISH_PUBLIC}"
-          --buildkit-version "${PACKER_BUILDKIT_VERSION}"
-          --commit-sha "${{ github.sha }}"
-      - run: |
-          jq -r '.builds[-1].artifact_id' "packer/manifest-arm64-${PACKER_REGION}.json" >> "$GITHUB_STEP_SUMMARY"
+          aws-region: ${{ env.BUILD_REGION }}
+      - name: Build arm64 AMI and copy to all regions
+        run: |
+          packer init packer/forja-builder.pkr.hcl
+          packer build \
+            -var "region=${BUILD_REGION}" \
+            -var "architecture=arm64" \
+            -var "publish_public=${PUBLISH_PUBLIC}" \
+            -var "buildkit_version=${BUILDKIT_VERSION}" \
+            -var "commit_sha=${{ github.sha }}" \
+            -var "copy_regions=[$(echo "${COPY_REGIONS}" | sed 's/\([^,]*\)/"\1"/g')]" \
+            packer/forja-builder.pkr.hcl
+      - name: Rename manifest
+        run: cp packer/manifest.json packer/manifest-arm64.json
       - uses: actions/upload-artifact@v4
         with:
           name: packer-manifest-arm64
-          path: packer/manifest-arm64-*.json
+          path: packer/manifest-arm64.json
+
+  publish:
+    needs: [build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: packer-manifest-amd64
+          path: packer/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: packer-manifest-arm64
+          path: packer/
+
+      - name: Generate AMI map
+        run: |
+          scripts/update-release-amis.sh \
+            --manifest-amd64 packer/manifest-amd64.json \
+            --manifest-arm64 packer/manifest-arm64.json
+
+      - name: Build AMI summary JSON
+        run: |
+          jq -n \
+            --argjson amd64 "$(cat packer/manifest-amd64.json)" \
+            --argjson arm64 "$(cat packer/manifest-arm64.json)" \
+            '{amd64: $amd64.builds[-1].artifact_id, arm64: $arm64.builds[-1].artifact_id}' \
+            > packer/ami-summary.json
+          cat packer/ami-summary.json
+
+      - name: Commit updated AMI map
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add internal/release/amis.go
+          if git diff --cached --quiet; then
+            echo "No changes to amis.go"
+          else
+            git commit -m "Update release AMI map for ${{ github.ref_name }}"
+            git push origin main
+          fi
+
+      - name: Attach AMI manifest to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            packer/ami-summary.json \
+            --clobber
