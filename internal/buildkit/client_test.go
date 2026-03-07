@@ -107,3 +107,56 @@ func TestRunReturnsOnCancelEvenIfSolveHangs(t *testing.T) {
 		t.Fatal("Run() did not return after cancellation")
 	}
 }
+
+func TestRunSetsS3CacheExportModeMax(t *testing.T) {
+	contextDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(contextDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	originalClientFactory := newBuildkitClient
+	t.Cleanup(func() {
+		newBuildkitClient = originalClientFactory
+	})
+
+	var gotOpt bkclient.SolveOpt
+	newBuildkitClient = func(ctx context.Context, req Request) (buildkitClient, error) {
+		return &fakeBuildkitClient{
+			solveFn: func(ctx context.Context, opt bkclient.SolveOpt, statusCh chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error) {
+				gotOpt = opt
+				close(statusCh)
+				return &bkclient.SolveResponse{}, nil
+			},
+		}, nil
+	}
+
+	_, err := Run(context.Background(), Request{
+		Addr:        "tcp://buildkit.invalid:8372",
+		ContextDir:  contextDir,
+		CacheBucket: "forja-cache-test",
+		CacheRegion: "us-east-1",
+		CacheName:   "repo",
+		Progress:    "plain",
+		Stderr:      &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(gotOpt.CacheImports) != 1 {
+		t.Fatalf("len(CacheImports) = %d, want 1", len(gotOpt.CacheImports))
+	}
+	if gotOpt.CacheImports[0].Attrs["mode"] != "" {
+		t.Fatalf("CacheImports mode = %q, want empty", gotOpt.CacheImports[0].Attrs["mode"])
+	}
+
+	if len(gotOpt.CacheExports) != 1 {
+		t.Fatalf("len(CacheExports) = %d, want 1", len(gotOpt.CacheExports))
+	}
+	if gotOpt.CacheExports[0].Type != "s3" {
+		t.Fatalf("CacheExports type = %q, want s3", gotOpt.CacheExports[0].Type)
+	}
+	if gotOpt.CacheExports[0].Attrs["mode"] != "max" {
+		t.Fatalf("CacheExports mode = %q, want max", gotOpt.CacheExports[0].Attrs["mode"])
+	}
+}

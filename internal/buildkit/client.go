@@ -112,9 +112,9 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	contextFS, err := fsutil.NewFS(contextDir)
+	contextFS, err := NewContextFS(contextDir, dockerfilePath)
 	if err != nil {
-		return nil, fmt.Errorf("open build context: %w", err)
+		return nil, err
 	}
 	dockerfileFS, err := fsutil.NewFS(filepath.Dir(dockerfilePath))
 	if err != nil {
@@ -162,8 +162,14 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 			"region": req.CacheRegion,
 			"name":   req.CacheName,
 		}
+		exportCacheAttrs := map[string]string{
+			"bucket": req.CacheBucket,
+			"region": req.CacheRegion,
+			"name":   req.CacheName,
+			"mode":   "max",
+		}
 		opt.CacheImports = []bkclient.CacheOptionsEntry{{Type: "s3", Attrs: cacheAttrs}}
-		opt.CacheExports = []bkclient.CacheOptionsEntry{{Type: "s3", Attrs: cacheAttrs}}
+		opt.CacheExports = []bkclient.CacheOptionsEntry{{Type: "s3", Attrs: exportCacheAttrs}}
 	}
 
 	var loadTarPath string
