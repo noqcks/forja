@@ -109,8 +109,16 @@ func collectInitAnswersTUI(cmd *cobra.Command) (initAnswers, error) {
 
 func newInitModel() initModel {
 	regions := releaseinfo.AWSRegions()
+	idx := 0
+	for i, r := range regions {
+		if r == "us-east-1" {
+			idx = i
+			break
+		}
+	}
 	return initModel{
-		regions: regions,
+		regions:     regions,
+		regionIndex: idx,
 	}
 }
 

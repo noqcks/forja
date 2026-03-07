@@ -36,7 +36,7 @@ func TestValidateInitAnswers(t *testing.T) {
 	}
 
 	if err := validateInitAnswers(initAnswers{
-		Region:      "us-west-2",
+		Region:      "af-south-1",
 		ARM64AMI:    "ami-0def",
 		CustomAMD64: defaultAMD64Instance,
 		CustomARM64: defaultARM64Instance,
