@@ -91,6 +91,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	buildID := "bld_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	buildHash := cloud.BuildSessionHash(buildID)
 	log.Infof("Build session: %s", buildID)
+	log.Infof("Build hash: %s", buildHash)
 	log.Infof("EC2 instance name prefix: %s", cloud.BuilderInstanceName(buildID, ""))
 	bundle, err := certs.Generate()
 	if err != nil {
@@ -131,6 +132,8 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 			if err != nil {
 				return err
 			}
+			instanceName := cloud.BuilderInstanceName(buildID, arch)
+			log.Infof("Creating EC2 instance %s for %s...", instanceName, platform)
 			instance, err := provider.LaunchBuilder(gctx, cloud.LaunchBuilderRequest{
 				Region:               cfg.Region,
 				Architecture:         arch,
@@ -149,7 +152,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				price = 0
 			}
 			launchedBuilders[i] = launched{platform: platform, arch: arch, instance: instance, price: price}
-			log.Infof("Launching builder %s (%s, %s, build %s)... ready in %.1fs", instance.Name, instance.InstanceType, cfg.Region, buildHash, time.Since(launchStart).Seconds())
+			log.Infof("Launching builder %s (%s, %s, build %s)... ready in %.1fs", instance.Name, instance.InstanceType, cfg.Region, instance.BuildHash, time.Since(launchStart).Seconds())
 			return nil
 		})
 	}
@@ -211,7 +214,8 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 		log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
 		log.Infof("  Ready:     %.1fs", result.WaitDuration.Seconds())
 		log.Infof("  Duration:  %.1fs", duration.Seconds())
-		log.Infof("  Instance:  %s (%s)", builder.instance.InstanceType, cfg.Region)
+		log.Infof("  Build:     %s", builder.instance.BuildHash)
+		log.Infof("  Instance:  %s (%s, %s)", builder.instance.Name, builder.instance.InstanceType, cfg.Region)
 		log.Infof("  Cost:      $%.4f", estimated)
 		if len(opts.tags) > 0 {
 			log.Infof("  Image:     %s", opts.tags[0])
@@ -300,6 +304,10 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	log.Infof("  Launch:    %.1fs", launchDuration.Seconds())
 	log.Infof("  Duration:  %.1fs", duration.Seconds())
 	log.Infof("  Platforms: %s", strings.Join(platforms, ","))
+	log.Infof("  Build:     %s", buildHash)
+	for _, builder := range launchedBuilders {
+		log.Infof("  Instance:  %s (%s, %s)", builder.instance.Name, builder.instance.InstanceType, cfg.Region)
+	}
 	log.Infof("  Cost:      $%.4f", totalCost)
 	if len(opts.tags) > 0 {
 		log.Infof("  Image:     %s", opts.tags[0])

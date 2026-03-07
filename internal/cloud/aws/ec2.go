@@ -217,12 +217,7 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
-				Tags: append(defaultTags(instanceName), []ec2types.Tag{
-					{Key: sdkaws.String(cloud.InstanceTagBuildID), Value: sdkaws.String(req.BuildID)},
-					{Key: sdkaws.String(cloud.InstanceTagBuildHash), Value: sdkaws.String(buildHash)},
-					{Key: sdkaws.String(cloud.InstanceTagArch), Value: sdkaws.String(req.Architecture)},
-					{Key: sdkaws.String(cloud.InstanceTagCertS3Path), Value: sdkaws.String(req.CertS3Path)},
-				}...),
+				Tags:         builderInstanceTags(req.BuildID, req.Architecture, req.CertS3Path),
 			},
 		},
 	})
@@ -245,14 +240,26 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 					if req.InstanceTypeOverride == "" {
 						instanceType = string(instance.InstanceType)
 					}
+					name := tagValue(instance.Tags, "Name")
+					if name == "" {
+						name = instanceName
+					}
+					buildID := tagValue(instance.Tags, cloud.InstanceTagBuildID)
+					if buildID == "" {
+						buildID = req.BuildID
+					}
+					instanceBuildHash := tagValue(instance.Tags, cloud.InstanceTagBuildHash)
+					if instanceBuildHash == "" {
+						instanceBuildHash = buildHash
+					}
 					return &cloud.BuilderInstance{
 						ID:           instanceID,
 						PublicIP:     sdkaws.ToString(instance.PublicIpAddress),
 						InstanceType: instanceType,
 						Architecture: req.Architecture,
-						Name:         tagValue(instance.Tags, "Name"),
-						BuildID:      tagValue(instance.Tags, cloud.InstanceTagBuildID),
-						BuildHash:    tagValue(instance.Tags, cloud.InstanceTagBuildHash),
+						Name:         name,
+						BuildID:      buildID,
+						BuildHash:    instanceBuildHash,
 						Region:       p.region,
 						LaunchTime:   sdkaws.ToTime(instance.LaunchTime),
 					}, nil
@@ -374,6 +381,17 @@ func defaultTags(name string) []ec2types.Tag {
 		{Key: sdkaws.String("Name"), Value: sdkaws.String(name)},
 		{Key: sdkaws.String("forja:managed"), Value: sdkaws.String("true")},
 	}
+}
+
+func builderInstanceTags(buildID string, arch string, certS3Path string) []ec2types.Tag {
+	instanceName := cloud.BuilderInstanceName(buildID, arch)
+	buildHash := cloud.BuildSessionHash(buildID)
+	return append(defaultTags(instanceName), []ec2types.Tag{
+		{Key: sdkaws.String(cloud.InstanceTagBuildID), Value: sdkaws.String(buildID)},
+		{Key: sdkaws.String(cloud.InstanceTagBuildHash), Value: sdkaws.String(buildHash)},
+		{Key: sdkaws.String(cloud.InstanceTagArch), Value: sdkaws.String(arch)},
+		{Key: sdkaws.String(cloud.InstanceTagCertS3Path), Value: sdkaws.String(certS3Path)},
+	}...)
 }
 
 func tagValue(tags []ec2types.Tag, key string) string {
