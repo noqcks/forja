@@ -12,13 +12,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	initSizeSmall  = "Small (c7a.large / c7g.large)"
-	initSizeMedium = "Medium (c7a.xlarge / c7g.xlarge)"
-	initSizeLarge  = "Large (c7a.2xlarge / c7g.2xlarge)"
-	initSizeCustom = "Custom"
-)
-
 var (
 	defaultAMD64AMI = releaseinfo.AWSAMI("us-east-1", "amd64")
 	defaultARM64AMI = releaseinfo.AWSAMI("us-east-1", "arm64")
@@ -65,16 +58,8 @@ var (
 	blurredCancelButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Cancel"))
 )
 
-var initSizeOptions = []string{
-	initSizeSmall,
-	initSizeMedium,
-	initSizeLarge,
-	initSizeCustom,
-}
-
 type initAnswers struct {
 	Region      string
-	SizeChoice  string
 	Registry    string
 	AMD64AMI    string
 	ARM64AMI    string
@@ -86,7 +71,6 @@ type initFocus int
 
 const (
 	initFocusRegion initFocus = iota
-	initFocusSize
 	initFocusRegistry
 	initFocusAMD64AMI
 	initFocusARM64AMI
@@ -103,7 +87,6 @@ type initModel struct {
 	arm64AMIInput    textinput.Model
 	customAMD64Input textinput.Model
 	customARM64Input textinput.Model
-	sizeIndex        int
 	focusIndex       int
 	errMessage       string
 	cancelled        bool
@@ -141,8 +124,8 @@ func newInitModel() initModel {
 		registryInput:    newInitTextInput("", "ghcr.io/org"),
 		amd64AMIInput:    newInitTextInput(defaultAMD64AMI, "ami-0123456789abcdef0"),
 		arm64AMIInput:    newInitTextInput(defaultARM64AMI, "ami-0123456789abcdef0"),
-		customAMD64Input: newInitTextInput("c7a.large", "c7a.large"),
-		customARM64Input: newInitTextInput("c7g.large", "c7g.large"),
+		customAMD64Input: newInitTextInput("c7a.8xlarge", "c7a.8xlarge"),
+		customARM64Input: newInitTextInput("c7g.8xlarge", "c7g.8xlarge"),
 	}
 	model.applyFocusStyles()
 	return model
@@ -178,22 +161,6 @@ func (m initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab", "down":
 			m.moveFocus(1)
 			return m, nil
-		case "left":
-			if m.focusedItem() == initFocusSize && m.sizeIndex > 0 {
-				m.sizeIndex--
-				m.errMessage = ""
-				m.clampFocus()
-				m.applyFocusStyles()
-			}
-			return m, nil
-		case "right":
-			if m.focusedItem() == initFocusSize && m.sizeIndex < len(initSizeOptions)-1 {
-				m.sizeIndex++
-				m.errMessage = ""
-				m.clampFocus()
-				m.applyFocusStyles()
-			}
-			return m, nil
 		case "enter":
 			switch m.focusedItem() {
 			case initFocusSubmit:
@@ -227,14 +194,11 @@ func (m initModel) View() string {
 	b.WriteString("\n\n")
 
 	b.WriteString(m.renderField(initFocusRegion, "AWS region", m.regionInput.View()))
-	b.WriteString(m.renderSizeChoice())
 	b.WriteString(m.renderField(initFocusRegistry, "Default registry", m.registryInput.View()))
 	b.WriteString(m.renderField(initFocusAMD64AMI, "Published amd64 AMI", m.amd64AMIInput.View()))
 	b.WriteString(m.renderField(initFocusARM64AMI, "Published arm64 AMI", m.arm64AMIInput.View()))
-	if m.usesCustomInstances() {
-		b.WriteString(m.renderField(initFocusCustomAMD64, "Custom amd64 instance", m.customAMD64Input.View()))
-		b.WriteString(m.renderField(initFocusCustomARM64, "Custom arm64 instance", m.customARM64Input.View()))
-	}
+	b.WriteString(m.renderField(initFocusCustomAMD64, "amd64 instance", m.customAMD64Input.View()))
+	b.WriteString(m.renderField(initFocusCustomARM64, "arm64 instance", m.customARM64Input.View()))
 
 	b.WriteString("\n")
 	b.WriteString(m.renderButtons())
@@ -245,7 +209,7 @@ func (m initModel) View() string {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("  ↑/↓ navigate • ←/→ change size • enter confirm • esc cancel"))
+	b.WriteString(helpStyle.Render("  ↑/↓ navigate • enter confirm • esc cancel"))
 	b.WriteString("\n")
 
 	return b.String()
@@ -291,13 +255,11 @@ func (m *initModel) updateFocusedInput(msg tea.Msg) tea.Cmd {
 func (m initModel) visibleItems() []initFocus {
 	items := []initFocus{
 		initFocusRegion,
-		initFocusSize,
 		initFocusRegistry,
 		initFocusAMD64AMI,
 		initFocusARM64AMI,
-	}
-	if m.usesCustomInstances() {
-		items = append(items, initFocusCustomAMD64, initFocusCustomARM64)
+		initFocusCustomAMD64,
+		initFocusCustomARM64,
 	}
 	return append(items, initFocusSubmit, initFocusCancel)
 }
@@ -358,10 +320,6 @@ func (m *initModel) applyFocusStyles() {
 	}
 }
 
-func (m initModel) usesCustomInstances() bool {
-	return initSizeOptions[m.sizeIndex] == initSizeCustom
-}
-
 func (m initModel) renderField(focus initFocus, label string, inputView string) string {
 	focused := m.focusedItem() == focus
 
@@ -373,40 +331,6 @@ func (m initModel) renderField(focus initFocus, label string, inputView string) 
 	}
 
 	return fmt.Sprintf("%s%s\n%s\n\n", cursor, style.Render(label), inputView)
-}
-
-func (m initModel) renderSizeChoice() string {
-	focused := m.focusedItem() == initFocusSize
-
-	cursor := "  "
-	style := labelStyle
-	if focused {
-		cursor = focusedStyle.Render("> ")
-		style = focusedLabelStyle
-	}
-
-	var b strings.Builder
-	b.WriteString(cursor)
-	b.WriteString(style.Render("Instance size"))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("    EC2 instance type for build workers. Larger = faster builds, higher cost."))
-	b.WriteString("\n")
-
-	for i, option := range initSizeOptions {
-		dot := unselectedDot
-		optionStyle := blurredStyle
-		if i == m.sizeIndex {
-			dot = selectedDot
-			if focused {
-				optionStyle = focusedStyle
-			} else {
-				optionStyle = lipgloss.NewStyle()
-			}
-		}
-		b.WriteString(fmt.Sprintf("    %s %s\n", dot, optionStyle.Render(option)))
-	}
-	b.WriteString("\n")
-	return b.String()
 }
 
 func (m initModel) renderButtons() string {
@@ -426,7 +350,6 @@ func (m initModel) renderButtons() string {
 func (m initModel) answersFromState() initAnswers {
 	return initAnswers{
 		Region:      strings.TrimSpace(m.regionInput.Value()),
-		SizeChoice:  initSizeOptions[m.sizeIndex],
 		Registry:    strings.TrimSpace(m.registryInput.Value()),
 		AMD64AMI:    strings.TrimSpace(m.amd64AMIInput.Value()),
 		ARM64AMI:    strings.TrimSpace(m.arm64AMIInput.Value()),
@@ -445,43 +368,11 @@ func validateInitAnswers(answers initAnswers) error {
 	if strings.TrimSpace(answers.ARM64AMI) == "" && resolvePublishedAMI(answers.Region, "arm64", answers.ARM64AMI) == "" {
 		return fmt.Errorf("published arm64 AMI is required for region %s", strings.TrimSpace(answers.Region))
 	}
-	if answers.SizeChoice == initSizeCustom {
-		if strings.TrimSpace(answers.CustomAMD64) == "" {
-			return errors.New("custom amd64 instance type is required")
-		}
-		if strings.TrimSpace(answers.CustomARM64) == "" {
-			return errors.New("custom arm64 instance type is required")
-		}
+	if strings.TrimSpace(answers.CustomAMD64) == "" {
+		return errors.New("amd64 instance type is required")
+	}
+	if strings.TrimSpace(answers.CustomARM64) == "" {
+		return errors.New("arm64 instance type is required")
 	}
 	return nil
-}
-
-func instanceTypesForSizeChoice(sizeChoice string, customAMD64 string, customARM64 string) (map[string]string, error) {
-	switch sizeChoice {
-	case initSizeSmall:
-		return map[string]string{
-			"amd64": "c7a.large",
-			"arm64": "c7g.large",
-		}, nil
-	case initSizeMedium:
-		return map[string]string{
-			"amd64": "c7a.xlarge",
-			"arm64": "c7g.xlarge",
-		}, nil
-	case initSizeLarge:
-		return map[string]string{
-			"amd64": "c7a.2xlarge",
-			"arm64": "c7g.2xlarge",
-		}, nil
-	case initSizeCustom:
-		if strings.TrimSpace(customAMD64) == "" || strings.TrimSpace(customARM64) == "" {
-			return nil, errors.New("custom instance types are required when size is Custom")
-		}
-		return map[string]string{
-			"amd64": strings.TrimSpace(customAMD64),
-			"arm64": strings.TrimSpace(customARM64),
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported size choice %q", sizeChoice)
-	}
 }

@@ -34,7 +34,7 @@ func TestSaveLoadAndExistsRoundTrip(t *testing.T) {
 	if loaded.Region != cfg.Region || loaded.CacheBucket != cfg.CacheBucket {
 		t.Fatalf("loaded config mismatch: %+v", loaded)
 	}
-	if loaded.Instances["amd64"] != "c7a.large" || loaded.Instances["arm64"] != "c7g.large" {
+	if loaded.Instances["amd64"] != "c7a.8xlarge" || loaded.Instances["arm64"] != "c7g.8xlarge" {
 		t.Fatalf("expected default instances to be preserved, got %+v", loaded.Instances)
 	}
 

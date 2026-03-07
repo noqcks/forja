@@ -383,11 +383,9 @@ AWS credentials detected (profile: default, account: 123456789012)
 
 ? AWS region: us-east-1
 ? Default platform: linux/amd64
-? Instance size for builds:
-  > Small  (2 vCPU, 4 GB  — c7a.large / c7g.large)   ~$0.07/hr
-    Medium (4 vCPU, 8 GB  — c7a.xlarge / c7g.xlarge)  ~$0.14/hr
-    Large  (8 vCPU, 16 GB — c7a.2xlarge / c7g.2xlarge) ~$0.28/hr
-    Custom (specify instance type)
+? Builder instance types:
+  > amd64: c7a.8xlarge
+    arm64: c7g.8xlarge
 ? Default registry (for --push): 123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 Creating AWS resources...

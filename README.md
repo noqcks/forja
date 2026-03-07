@@ -152,8 +152,8 @@ Config is stored at `~/.forja/config.yaml` after running `forja init`:
 region: us-east-1
 default_platform: linux/amd64
 instances:
-  amd64: c7a.large
-  arm64: c7g.large
+  amd64: c7a.8xlarge
+  arm64: c7g.8xlarge
 registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
 cache_bucket: forja-cache-123456789012-us-east-1
 cache_ttl_days: 14

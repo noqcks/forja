@@ -54,7 +54,7 @@ func Default() *Config {
 	return &Config{
 		Provider:            "aws",
 		DefaultPlatform:     "linux/amd64",
-		Instances:           map[string]string{"amd64": "c7a.large", "arm64": "c7g.large"},
+		Instances:           map[string]string{"amd64": "c7a.8xlarge", "arm64": "c7g.8xlarge"},
 		CacheTTLDays:        14,
 		SelfDestructMinutes: 60,
 		PublishedAMI:        map[string]string{},
