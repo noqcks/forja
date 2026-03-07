@@ -26,6 +26,35 @@ import (
 	"github.com/tonistiigi/fsutil"
 )
 
+var buildkitCancelGracePeriod = 2 * time.Second
+
+type buildkitClient interface {
+	Wait(context.Context) error
+	Solve(context.Context, bkclient.SolveOpt, chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error)
+	Close() error
+}
+
+type buildkitClientAdapter struct {
+	*bkclient.Client
+}
+
+func (c buildkitClientAdapter) Solve(ctx context.Context, opt bkclient.SolveOpt, statusCh chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error) {
+	return c.Client.Solve(ctx, nil, opt, statusCh)
+}
+
+var newBuildkitClient = func(ctx context.Context, req Request) (buildkitClient, error) {
+	client, err := bkclient.New(
+		ctx,
+		req.Addr,
+		bkclient.WithCredentials(req.ClientCertPath, req.ClientKeyPath),
+		bkclient.WithServerConfig("forja-builder", req.CACertPath),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return buildkitClientAdapter{Client: client}, nil
+}
+
 type Request struct {
 	Addr           string
 	CACertPath     string
@@ -56,12 +85,7 @@ type Result struct {
 }
 
 func Run(ctx context.Context, req Request) (*Result, error) {
-	client, err := bkclient.New(
-		ctx,
-		req.Addr,
-		bkclient.WithCredentials(req.ClientCertPath, req.ClientKeyPath),
-		bkclient.WithServerConfig("forja-builder", req.CACertPath),
-	)
+	client, err := newBuildkitClient(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("connect buildkit client: %w", err)
 	}
@@ -79,7 +103,7 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}()
 
 	waitStart := time.Now()
-	if err := client.Wait(ctx); err != nil {
+	if err := waitForBuildkit(ctx, client); err != nil {
 		return nil, fmt.Errorf("wait for buildkit: %w", err)
 	}
 	waitDuration := time.Since(waitStart)
@@ -174,7 +198,8 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		})
 	}
 
-	statusCh := make(chan *bkclient.SolveStatus)
+	solveStatusCh := make(chan *bkclient.SolveStatus, 32)
+	displayStatusCh := make(chan *bkclient.SolveStatus)
 	displayMode := progressui.DisplayMode(req.Progress)
 	if displayMode == "" {
 		displayMode = progressui.AutoMode
@@ -192,10 +217,11 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	reporter.Add(1)
 	go func() {
 		defer reporter.Done()
-		_, displayErr = display.UpdateFrom(ctx, statusCh)
+		_, displayErr = display.UpdateFrom(ctx, displayStatusCh)
 	}()
+	go forwardSolveStatus(ctx, solveStatusCh, displayStatusCh)
 
-	resp, err := client.Solve(ctx, nil, opt, statusCh)
+	resp, err := solveBuild(ctx, client, opt, solveStatusCh)
 	reporter.Wait()
 	if err == nil && displayErr != nil {
 		return nil, fmt.Errorf("progress display: %w", displayErr)
@@ -218,6 +244,73 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		}
 	}
 	return &Result{ExporterResponse: resp.ExporterResponse, WaitDuration: waitDuration}, nil
+}
+
+func waitForBuildkit(ctx context.Context, client buildkitClient) error {
+	_, err := awaitBuildkitCall(ctx, client, func() (struct{}, error) {
+		return struct{}{}, client.Wait(ctx)
+	})
+	return err
+}
+
+func solveBuild(ctx context.Context, client buildkitClient, opt bkclient.SolveOpt, statusCh chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error) {
+	return awaitBuildkitCall(ctx, client, func() (*bkclient.SolveResponse, error) {
+		return client.Solve(ctx, opt, statusCh)
+	})
+}
+
+func awaitBuildkitCall[T any](ctx context.Context, client buildkitClient, fn func() (T, error)) (T, error) {
+	type result struct {
+		value T
+		err   error
+	}
+
+	resultCh := make(chan result, 1)
+	go func() {
+		value, err := fn()
+		resultCh <- result{value: value, err: err}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.value, result.err
+	case <-ctx.Done():
+		_ = client.Close()
+		timer := time.NewTimer(buildkitCancelGracePeriod)
+		defer timer.Stop()
+
+		select {
+		case result := <-resultCh:
+			return result.value, result.err
+		case <-timer.C:
+			var zero T
+			return zero, context.Cause(ctx)
+		}
+	}
+}
+
+func forwardSolveStatus(ctx context.Context, solveStatusCh <-chan *bkclient.SolveStatus, displayStatusCh chan<- *bkclient.SolveStatus) {
+	defer close(displayStatusCh)
+
+	for {
+		select {
+		case status, ok := <-solveStatusCh:
+			if !ok {
+				return
+			}
+			select {
+			case displayStatusCh <- status:
+			case <-ctx.Done():
+				for range solveStatusCh {
+				}
+				return
+			}
+		case <-ctx.Done():
+			for range solveStatusCh {
+			}
+			return
+		}
+	}
 }
 
 func sessionAttachables(secretSpecs []string) ([]session.Attachable, error) {
