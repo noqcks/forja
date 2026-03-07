@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/noqcks/forja/internal/config"
 )
+
+type stubInstanceTypeArchitectureProvider struct {
+	architectures []string
+	err           error
+}
+
+func (s stubInstanceTypeArchitectureProvider) InstanceTypeArchitectures(context.Context, string) ([]string, error) {
+	return s.architectures, s.err
+}
 
 func TestPlatformListUsesDefaultAndTrims(t *testing.T) {
 	t.Parallel()
@@ -184,6 +194,28 @@ func TestValidateBuildOptionsRejectsBadRequestsBeforeAWS(t *testing.T) {
 	}
 	if subnetID != "subnet-123" {
 		t.Fatalf("subnetID = %q", subnetID)
+	}
+}
+
+func TestValidateInstanceTypeArchitectureRejectsMismatchedArch(t *testing.T) {
+	t.Parallel()
+
+	err := validateInstanceTypeArchitecture(context.Background(), stubInstanceTypeArchitectureProvider{
+		architectures: []string{"arm64"},
+	}, "c7g.large", "linux/amd64")
+	if err == nil || !strings.Contains(err.Error(), `instance type "c7g.large" supports arm64`) {
+		t.Fatalf("expected mismatched arch error, got %v", err)
+	}
+}
+
+func TestValidateInstanceTypeArchitectureAllowsMatchingArch(t *testing.T) {
+	t.Parallel()
+
+	err := validateInstanceTypeArchitecture(context.Background(), stubInstanceTypeArchitectureProvider{
+		architectures: []string{"amd64"},
+	}, "c7a.large", "linux/amd64")
+	if err != nil {
+		t.Fatalf("validateInstanceTypeArchitecture() error = %v", err)
 	}
 }
 

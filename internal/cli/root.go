@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -29,7 +30,9 @@ func Execute(ctx context.Context) error {
 	)
 	cmd.SetContext(ctx)
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		log.Error(err)
+		if !errors.Is(err, context.Canceled) {
+			log.Error(err)
+		}
 		return err
 	}
 	return nil

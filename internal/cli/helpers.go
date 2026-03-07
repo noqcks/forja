@@ -15,6 +15,10 @@ import (
 	"github.com/noqcks/forja/internal/config"
 )
 
+type instanceTypeArchitectureProvider interface {
+	InstanceTypeArchitectures(ctx context.Context, instanceType string) ([]string, error)
+}
+
 func loadCommandConfig(validate bool) (*config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -133,6 +137,30 @@ func platformDescriptor(platform string) (v1.Platform, error) {
 	default:
 		return v1.Platform{}, fmt.Errorf("unsupported platform %q", platform)
 	}
+}
+
+func validateInstanceTypeArchitecture(ctx context.Context, provider instanceTypeArchitectureProvider, instanceType string, platform string) error {
+	instanceType = strings.TrimSpace(instanceType)
+	if instanceType == "" {
+		return nil
+	}
+	arch, err := platformArch(platform)
+	if err != nil {
+		return err
+	}
+	architectures, err := provider.InstanceTypeArchitectures(ctx, instanceType)
+	if err != nil {
+		return fmt.Errorf("look up architecture for instance type %q: %w", instanceType, err)
+	}
+	if len(architectures) == 0 {
+		return fmt.Errorf("could not determine architecture for instance type %q", instanceType)
+	}
+	for _, supported := range architectures {
+		if supported == arch {
+			return nil
+		}
+	}
+	return fmt.Errorf("instance type %q supports %s, but build target is %s", instanceType, strings.Join(architectures, ", "), platform)
 }
 
 func renderUserData(cacheBucket string, region string, selfDestructMinutes int) string {

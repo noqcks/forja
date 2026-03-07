@@ -66,6 +66,17 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("connect buildkit client: %w", err)
 	}
 	defer client.Close()
+	clientDone := make(chan struct{})
+	defer close(clientDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Force the underlying gRPC connection closed so Solve/Wait do not
+			// linger after the caller has already canceled the build.
+			client.Close()
+		case <-clientDone:
+		}
+	}()
 
 	waitStart := time.Now()
 	if err := client.Wait(ctx); err != nil {

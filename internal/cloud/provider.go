@@ -8,6 +8,7 @@ type Provider interface {
 	EnsureInfrastructure(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error)
 	UploadCertificates(ctx context.Context, req UploadCertificatesRequest) (string, error)
 	DeleteCertificates(ctx context.Context, bucket string, buildID string) error
+	InstanceTypeArchitectures(ctx context.Context, instanceType string) ([]string, error)
 	LaunchBuilder(ctx context.Context, req LaunchBuilderRequest) (*BuilderInstance, error)
 	TerminateInstances(ctx context.Context, region string, instanceIDs []string) error
 	ListOrphanedInstances(ctx context.Context, region string) ([]OrphanedInstance, error)

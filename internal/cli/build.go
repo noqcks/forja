@@ -84,6 +84,9 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	if _, err := provider.Identity(ctx); err != nil {
 		return formatAWSIdentityError(err, root.profile)
 	}
+	if err := validateInstanceTypeArchitecture(ctx, provider, opts.instanceType, platforms[0]); err != nil {
+		return err
+	}
 
 	buildID := "bld_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	buildHash := cloud.BuildSessionHash(buildID)
