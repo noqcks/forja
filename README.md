@@ -73,6 +73,9 @@ forja build --secret id=npmrc,src=$HOME/.npmrc -t myapp:latest .
 # Override instance type for a heavy build
 forja build --instance-type c7a.2xlarge -t myapp:latest --push .
 
+# Pin cache namespace across git worktrees
+forja build --cache-name myapp -t myapp:latest --push .
+
 # Load image into local Docker daemon
 forja build -t myapp:latest --load .
 ```
@@ -90,6 +93,7 @@ forja build -t myapp:latest --load .
       --secret strings       Build secrets (id=mysecret,src=./secret.txt)
       --no-cache             Do not use cache
       --progress string      Progress output type (auto, plain, tty)
+      --cache-name string    Override S3 cache namespace (default: context directory name)
       --instance-type string Override instance type for this build
       --profile string       AWS profile to use
 ```
