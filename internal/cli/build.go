@@ -30,6 +30,7 @@ type buildOptions struct {
 	noCache      bool
 	progress     string
 	instanceType string
+	cacheName    string
 }
 
 type launchedBuilder struct {
@@ -64,6 +65,7 @@ func newBuildCmd(root *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "Do not use cache")
 	cmd.Flags().StringVar(&opts.progress, "progress", "auto", "Progress output type")
 	cmd.Flags().StringVar(&opts.instanceType, "instance-type", "", "Override instance type for this build")
+	cmd.Flags().StringVar(&opts.cacheName, "cache-name", "", "Override the S3 cache namespace (default: context directory name)")
 	return cmd
 }
 
@@ -179,7 +181,10 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 	}()
 
 	start := time.Now()
-	cacheName := cacheNameForContext(contextDir)
+	cacheName := opts.cacheName
+	if cacheName == "" {
+		cacheName = cacheNameForContext(contextDir)
+	}
 	if len(platforms) == 1 {
 		builder := launchedBuilders[0]
 		addr := fmt.Sprintf("tcp://%s:8372", builder.instance.PublicIP)
