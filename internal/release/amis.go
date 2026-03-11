@@ -4,23 +4,23 @@ package release
 
 var awsAMIs = map[string]map[string]string{
 	"ap-southeast-1": {
-		"amd64": "ami-030fc637ef07f4622",
-		"arm64": "ami-08c81e496c454d276",
+		"amd64": "ami-0b052c2d12a15fbaa",
+		"arm64": "ami-05b51fc9b6e9866f4",
 	},
 	"eu-central-1": {
-		"amd64": "ami-0cf1d90115e7ea4dd",
-		"arm64": "ami-0b274b2fd5218da7c",
+		"amd64": "ami-025b8f05ae91c532d",
+		"arm64": "ami-04d8249c59511b97f",
 	},
 	"eu-west-1": {
-		"amd64": "ami-005abb2af342d5b27",
-		"arm64": "ami-0287c0578b9d9a36d",
+		"amd64": "ami-0206c9f1792d5ec01",
+		"arm64": "ami-04d3f1e44bc12227d",
 	},
 	"us-east-1": {
-		"amd64": "ami-0f0c5fca374fb0116",
-		"arm64": "ami-0c935653e9dabb2e9",
+		"amd64": "ami-0243fd4828b8df974",
+		"arm64": "ami-0489b8e9199fb721b",
 	},
 	"us-west-2": {
-		"amd64": "ami-0157bda714a8b2824",
-		"arm64": "ami-02c5ba9d92356bccd",
+		"amd64": "ami-09f49870420e7dd9f",
+		"arm64": "ami-0d24da8e98dcfb887",
 	},
 }
