@@ -31,6 +31,7 @@ type buildOptions struct {
 	progress     string
 	instanceType string
 	cacheName    string
+	diskSize     int32
 }
 
 type launchedBuilder struct {
@@ -66,6 +67,7 @@ func newBuildCmd(root *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.progress, "progress", "auto", "Progress output type")
 	cmd.Flags().StringVar(&opts.instanceType, "instance-type", "", "Override instance type for this build")
 	cmd.Flags().StringVar(&opts.cacheName, "cache-name", "", "Override the S3 cache namespace (default: context directory name)")
+	cmd.Flags().Int32Var(&opts.diskSize, "disk-size", 20, "EBS volume size in GB for the build machine")
 	return cmd
 }
 
@@ -146,6 +148,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, root *rootOptions, opts *
 				BuildID:              buildID,
 				CertS3Path:           certS3Path,
 				UserData:             renderUserData(cfg.CacheBucket, cfg.Region, cfg.SelfDestructMinutes),
+				DiskSizeGB:           opts.diskSize,
 			})
 			if err != nil {
 				return err

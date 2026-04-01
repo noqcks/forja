@@ -61,6 +61,7 @@ type LaunchBuilderRequest struct {
 	BuildID              string
 	CertS3Path           string
 	UserData             string
+	DiskSizeGB           int32
 }
 
 type BuilderInstance struct {
