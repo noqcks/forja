@@ -204,7 +204,7 @@ func (p *Provider) ensureLaunchTemplates(ctx context.Context, amis map[string]st
 func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderRequest) (*cloud.BuilderInstance, error) {
 	instanceName := cloud.BuilderInstanceName(req.BuildID, req.Architecture)
 	buildHash := cloud.BuildSessionHash(req.BuildID)
-	out, err := p.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
+	input := &ec2.RunInstancesInput{
 		MinCount: sdkaws.Int32(1),
 		MaxCount: sdkaws.Int32(1),
 		LaunchTemplate: &ec2types.LaunchTemplateSpecification{
@@ -220,7 +220,20 @@ func (p *Provider) LaunchBuilder(ctx context.Context, req cloud.LaunchBuilderReq
 				Tags:         builderInstanceTags(req.BuildID, req.Architecture, req.CertS3Path),
 			},
 		},
-	})
+	}
+	if req.DiskSizeGB > 0 {
+		input.BlockDeviceMappings = []ec2types.BlockDeviceMapping{
+			{
+				DeviceName: sdkaws.String("/dev/xvda"),
+				Ebs: &ec2types.EbsBlockDevice{
+					DeleteOnTermination: sdkaws.Bool(true),
+					VolumeSize:          sdkaws.Int32(req.DiskSizeGB),
+					VolumeType:          ec2types.VolumeTypeGp3,
+				},
+			},
+		}
+	}
+	out, err := p.ec2.RunInstances(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("run instances: %w", err)
 	}
